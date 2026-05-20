@@ -92,8 +92,36 @@ npm run lint       # next lint
 
 1. Push the branch (or fork) to GitHub.
 2. Import the repo at https://vercel.com/new.
-3. Add `ANTHROPIC_API_KEY` to **Settings → Environment Variables**.
-4. Deploy.
+3. **Pick the right branch as Production Branch** — the Next.js code only
+   lives on `claude/review-repo-zHqBj`. If your repo's default branch
+   still points at the old Python code, set Production Branch under
+   **Settings → Git → Production Branch** to the branch with this
+   `package.json`, or merge it into your default branch first.
+4. Leave **Root Directory** blank (or `./`). `package.json` and
+   `vercel.json` are both at the repo root.
+5. Add env vars in **Settings → Environment Variables**:
+   - `ANTHROPIC_API_KEY`
+   - `BETTER_AUTH_SECRET` (≥16 chars, e.g. `openssl rand -base64 32`)
+   - `APP_PASSWORD` (your login password)
+   - `APP_USER` (optional, defaults to `admin`)
+6. Deploy.
+
+### Troubleshooting
+
+**`No Next.js version detected. Make sure your package.json has "next" in
+either "dependencies" or "devDependencies".`**
+
+Vercel didn't find `next` in the `package.json` it cloned — almost always
+because the **wrong branch** was deployed. Confirm:
+
+- `package.json` is at the repo root on the branch Vercel is building
+  (`git ls-tree <branch> -- package.json` should show a single entry).
+- `next` is in `dependencies` (it is on `claude/review-repo-zHqBj`).
+- Vercel's **Root Directory** is empty/`./`, not a subdir.
+- Vercel's **Production Branch** is the one containing the Next.js code,
+  not the legacy Python branch.
+
+Quick redeploy after fixing branch settings: **Deployments → … → Redeploy**.
 
 ### Tier requirements
 

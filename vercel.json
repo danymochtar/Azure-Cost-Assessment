@@ -1,10 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
+  "buildCommand": "next build",
+  "devCommand": "next dev",
+  "installCommand": "npm install",
+  "outputDirectory": ".next",
   "functions": {
     "app/api/classify/route.ts": { "maxDuration": 60 },
     "app/api/extract/route.ts": { "maxDuration": 300 },
     "app/api/price/route.ts": { "maxDuration": 60 },
-    "app/api/export/route.ts": { "maxDuration": 30 }
+    "app/api/export/route.ts": { "maxDuration": 30 },
+    "app/api/auth/login/route.ts": { "maxDuration": 10 },
+    "app/api/auth/logout/route.ts": { "maxDuration": 10 }
   }
 }
