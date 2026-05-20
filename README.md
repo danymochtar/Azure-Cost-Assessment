@@ -30,7 +30,7 @@ Built with **Next.js 15 (App Router) + TypeScript** and deployable to **Vercel**
 | Multi-file classification with aggregation across uploads | ✅ |
 | Vitest suite for picker / bandwidth / sizer (28 tests) | ✅ |
 | Zod request validation at /api/price and /api/export | ✅ |
-| HMAC-signed cookie auth (single user, no DB) | ✅ |
+| HMAC-signed cookie auth (env-var admin + KV-backed multi-user registration) | ✅ |
 | Installable PWA with iOS / Android home-screen support | ✅ |
 | Responsive mobile-first UI (iOS safe area, 44 px tap targets, dark mode) | ✅ |
 | Infra Modernization pillar (App Service / AKS / ACA / APIM / Front Door / ACR) | ⏳ TODO |
@@ -60,12 +60,36 @@ Open http://localhost:3000 → redirects to `/login` until you sign in.
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Claude classifier + extractor | — (required) |
 | `BETTER_AUTH_SECRET` | HMAC key for the session cookie. **Rotate to invalidate every session.** | — (required, ≥16 chars) |
-| `APP_USER` | Username shown on the login form | `admin` |
-| `APP_PASSWORD` | Password to log in with | falls back to `BETTER_AUTH_SECRET` |
+| `APP_USER` | Bootstrap admin username (env-var fallback for login) | `admin` |
+| `APP_PASSWORD` | Bootstrap admin password | falls back to `BETTER_AUTH_SECRET` |
+| `KV_REST_API_URL` | Upstash Redis URL — enables `/register` | — (optional) |
+| `KV_REST_API_TOKEN` | Upstash Redis token | — (optional) |
 
 The session cookie is stateless (HMAC-SHA256 over `{user, exp}`), HttpOnly,
-SameSite=Lax, 30-day lifetime. No database needed — fits Vercel
-serverless out of the box.
+SameSite=Lax, 30-day lifetime. The bootstrap admin always works (no DB
+needed); turning on Vercel KV unlocks the `/register` page so other
+users can sign up.
+
+### Multi-user signup
+
+Visit `/register` (or click "Create account" on the login screen). Form
+takes an email or username + an ≥8-char password; on success the user is
+created in Vercel KV (bcrypt-hashed) and signed in automatically.
+
+To enable in production:
+
+1. In your Vercel project: **Storage → Browse Marketplace → Upstash for
+   Redis → Add Integration**. Pick the free tier; Vercel adds
+   `KV_REST_API_URL` and `KV_REST_API_TOKEN` to the project env vars.
+2. Redeploy.
+
+Without those env vars set:
+
+- **Dev (local)** — registrations are kept in an in-memory `Map` on
+  `globalThis` so they survive HMR for the life of the dev process.
+- **Production** — `/api/auth/register` returns `503` (registration
+  disabled). The bootstrap admin can still log in via `APP_USER` +
+  `APP_PASSWORD`.
 
 ## Install on iPhone (PWA)
 
@@ -147,10 +171,12 @@ app/
   icon.tsx / apple-icon.tsx     ← Generated PNG icons (ImageResponse)
   page.tsx                      ← Server component: gate on session cookie → AssessmentApp
   assessment-app.tsx            ← Client UI (upload, context, results, sign-out, reset)
-  login/page.tsx, login-form.tsx ← Sign-in page
+  login/page.tsx, login-form.tsx       ← Sign-in page (with link to /register)
+  register/page.tsx, register-form.tsx ← Sign-up page (email + ≥8-char password)
   api/
-    auth/login/route.ts         ← Validates creds, sets HMAC-signed cookie
+    auth/login/route.ts         ← KV user lookup → bcrypt verify → falls back to env-var admin → sets HMAC cookie
     auth/logout/route.ts        ← Clears the cookie
+    auth/register/route.ts      ← Creates a new user in KV (bcrypt-hashed), signs them in
     classify/route.ts           ← multipart upload → Haiku-cascade classifier (per-file + aggregate)
     extract/route.ts            ← multipart upload → Sonnet-cascade VM extractor (tool_use)
     price/route.ts              ← Zod-validated JSON → lift-shift BOM via Retail API
@@ -159,6 +185,7 @@ middleware.ts                   ← Edge: redirects unauthed to /login (structur
 lib/
   auth.ts                       ← HMAC sign / verify session payloads (Node runtime)
   auth-constants.ts             ← Shared cookie name (Edge-safe, no node:crypto import)
+  users.ts                      ← User store: Upstash Redis in prod, in-memory in dev; bcrypt password hashing
   models.ts                     ← BomLine / InventoryItem / AssessmentProfile types
   constants.ts                  ← Azure regions, labels, fallback map, modes
   anthropic.ts                  ← SDK client + tier-cascade wrapper (529 / 5xx → next tier)

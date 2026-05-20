@@ -13,6 +13,7 @@ import { SESSION_COOKIE } from "@/lib/auth-constants";
 
 const PUBLIC_PREFIXES = [
   "/login",
+  "/register",
   "/api/auth/",
   "/_next/",
   "/icon",

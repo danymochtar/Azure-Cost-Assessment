@@ -3,29 +3,34 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Lock, AlertCircle, Cloud, LogIn, UserPlus } from "lucide-react";
+import { AlertCircle, AtSign, Cloud, Lock, UserPlus } from "lucide-react";
 
-export default function LoginForm({ next }: { next: string }) {
+export default function RegisterForm({ next }: { next: string }) {
   const router = useRouter();
-  const [user, setUser] = useState("admin");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
+  const passwordOk = password.length >= 8;
+  const matchOk = password === confirm;
+  const canSubmit = identifier.length >= 3 && passwordOk && matchOk && !pending;
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!password) return;
+    if (!canSubmit) return;
     setPending(true);
     setError("");
     try {
-      const resp = await fetch("/api/auth/login", {
+      const resp = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user, password }),
+        body: JSON.stringify({ identifier, password }),
       });
       if (!resp.ok) {
         const data = (await resp.json().catch(() => ({}))) as { error?: string };
-        throw new Error(data.error || `Sign-in failed (HTTP ${resp.status})`);
+        throw new Error(data.error || `Sign-up failed (HTTP ${resp.status})`);
       }
       router.replace(next);
       router.refresh();
@@ -43,8 +48,8 @@ export default function LoginForm({ next }: { next: string }) {
           <div className="brand-icon" aria-hidden>
             <Cloud size={28} strokeWidth={2.4} />
           </div>
-          <h1>Azure Cost Assessment</h1>
-          <p>Sign in to continue</p>
+          <h1>Create account</h1>
+          <p>Sign up to start running assessments</p>
         </div>
 
         {error && (
@@ -56,18 +61,20 @@ export default function LoginForm({ next }: { next: string }) {
 
         <form className="login-form" onSubmit={submit}>
           <div className="field">
-            <label className="field-label" htmlFor="user">
-              Username
+            <label className="field-label" htmlFor="identifier">
+              <AtSign size={14} /> Email or username
             </label>
             <input
-              id="user"
+              id="identifier"
               type="text"
               autoComplete="username"
               autoCapitalize="none"
               autoCorrect="off"
-              value={user}
-              onChange={(e) => setUser(e.target.value)}
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              placeholder="you@example.com"
               required
+              autoFocus
             />
           </div>
           <div className="field">
@@ -77,43 +84,57 @@ export default function LoginForm({ next }: { next: string }) {
             <input
               id="password"
               type="password"
-              autoComplete="current-password"
+              autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••••••"
               required
-              autoFocus
             />
+            <div className="helper" style={{ color: password.length === 0 || passwordOk ? "var(--text-muted)" : "var(--danger)" }}>
+              At least 8 characters
+            </div>
+          </div>
+          <div className="field">
+            <label className="field-label" htmlFor="confirm">
+              <Lock size={14} /> Confirm password
+            </label>
+            <input
+              id="confirm"
+              type="password"
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              required
+            />
+            {confirm.length > 0 && !matchOk && (
+              <div className="helper" style={{ color: "var(--danger)" }}>
+                Passwords don&apos;t match
+              </div>
+            )}
           </div>
 
           <button
             className="primary"
             type="submit"
-            disabled={pending || !password}
+            disabled={!canSubmit}
             style={{ marginTop: "0.25rem" }}
           >
             {pending ? (
               <>
-                <span className="spinner" /> Signing in…
+                <span className="spinner" /> Creating account…
               </>
             ) : (
               <>
-                <LogIn size={16} /> Sign in
+                <UserPlus size={16} /> Create account
               </>
             )}
           </button>
-
-          <Link
-            href={`/register${next && next !== "/" ? `?next=${encodeURIComponent(next)}` : ""}`}
-            className="button"
-            style={{ width: "100%" }}
-          >
-            <UserPlus size={16} /> Create account
-          </Link>
         </form>
 
         <div className="login-foot">
-          Session signed with <code>BETTER_AUTH_SECRET</code> · 30-day cookie
+          Already have an account?{" "}
+          <Link href={`/login${next && next !== "/" ? `?next=${encodeURIComponent(next)}` : ""}`}>
+            Sign in
+          </Link>
         </div>
       </div>
     </div>
