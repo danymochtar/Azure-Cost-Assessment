@@ -30,6 +30,9 @@ Built with **Next.js 15 (App Router) + TypeScript** and deployable to **Vercel**
 | Multi-file classification with aggregation across uploads | ✅ |
 | Vitest suite for picker / bandwidth / sizer (28 tests) | ✅ |
 | Zod request validation at /api/price and /api/export | ✅ |
+| HMAC-signed cookie auth (single user, no DB) | ✅ |
+| Installable PWA with iOS / Android home-screen support | ✅ |
+| Responsive mobile-first UI (iOS safe area, 44 px tap targets, dark mode) | ✅ |
 | Infra Modernization pillar (App Service / AKS / ACA / APIM / Front Door / ACR) | ⏳ TODO |
 | Data Platform pillar (Fabric / Synapse / Cosmos / SQL DB / ADLS / ADF / EH) | ⏳ TODO |
 | AI Application pillar (Azure OpenAI / AI Search / ML / GPU VMs / Cognitive) | ⏳ TODO |
@@ -45,11 +48,35 @@ Built with **Next.js 15 (App Router) + TypeScript** and deployable to **Vercel**
 
 ```bash
 npm install
-cp .env.example .env.local   # add your ANTHROPIC_API_KEY
+cp .env.example .env.local   # set ANTHROPIC_API_KEY, BETTER_AUTH_SECRET, APP_PASSWORD
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3000 → redirects to `/login` until you sign in.
+
+### Required env vars
+
+| Var | Purpose | Default |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Claude classifier + extractor | — (required) |
+| `BETTER_AUTH_SECRET` | HMAC key for the session cookie. **Rotate to invalidate every session.** | — (required, ≥16 chars) |
+| `APP_USER` | Username shown on the login form | `admin` |
+| `APP_PASSWORD` | Password to log in with | falls back to `BETTER_AUTH_SECRET` |
+
+The session cookie is stateless (HMAC-SHA256 over `{user, exp}`), HttpOnly,
+SameSite=Lax, 30-day lifetime. No database needed — fits Vercel
+serverless out of the box.
+
+## Install on iPhone (PWA)
+
+1. Open the deployed URL in Safari on iOS.
+2. Tap the Share button → **Add to Home Screen**.
+3. The app launches in its own window with no browser chrome, and uses
+   the cloud logo + theme color from `app/manifest.ts` / `app/apple-icon.tsx`.
+4. Session cookies persist between launches; sign in once and you're set.
+
+Android Chrome supports the same install flow via the address-bar
+**Install** prompt or **Add to Home screen** menu.
 
 ## Scripts
 
@@ -87,13 +114,23 @@ and the server reads file bytes via the standard `Request.formData()` API.
 
 ```
 app/
-  layout.tsx, page.tsx          ← single-page UI (upload, context, results, reset)
+  layout.tsx                    ← Inter font, PWA meta, viewport-fit=cover, theme-color
+  manifest.ts                   ← PWA web manifest (typed)
+  icon.tsx / apple-icon.tsx     ← Generated PNG icons (ImageResponse)
+  page.tsx                      ← Server component: gate on session cookie → AssessmentApp
+  assessment-app.tsx            ← Client UI (upload, context, results, sign-out, reset)
+  login/page.tsx, login-form.tsx ← Sign-in page
   api/
+    auth/login/route.ts         ← Validates creds, sets HMAC-signed cookie
+    auth/logout/route.ts        ← Clears the cookie
     classify/route.ts           ← multipart upload → Haiku-cascade classifier (per-file + aggregate)
     extract/route.ts            ← multipart upload → Sonnet-cascade VM extractor (tool_use)
     price/route.ts              ← Zod-validated JSON → lift-shift BOM via Retail API
     export/route.ts             ← Zod-validated JSON → Excel download
+middleware.ts                   ← Edge: redirects unauthed to /login (structural cookie check)
 lib/
+  auth.ts                       ← HMAC sign / verify session payloads (Node runtime)
+  auth-constants.ts             ← Shared cookie name (Edge-safe, no node:crypto import)
   models.ts                     ← BomLine / InventoryItem / AssessmentProfile types
   constants.ts                  ← Azure regions, labels, fallback map, modes
   anthropic.ts                  ← SDK client + tier-cascade wrapper (529 / 5xx → next tier)
