@@ -24,9 +24,12 @@ Built with **Next.js 15 (App Router) + TypeScript** and deployable to **Vercel**
 | Right-sizing (Burstable / D-series / E-series; AHB; non-prod PAYG) | ✅ |
 | Multi-disk per VM (Premium / Standard SSD / Standard HDD auto-routing) | ✅ |
 | Live Azure Retail Prices API with regional + term fallback | ✅ |
-| Billing terms: PAYG / SP 1Y / SP 3Y / RI 1Y / RI 3Y | ✅ |
+| Billing terms: PAYG / SP 1Y / SP 3Y / RI 1Y / RI 3Y (with per-line fallback labeling) | ✅ |
 | Compute modes: Saving / Normal / High-Performance | ✅ |
 | Excel export (Pricing Calculator template) + JSON export | ✅ |
+| Multi-file classification with aggregation across uploads | ✅ |
+| Vitest suite for picker / bandwidth / sizer (28 tests) | ✅ |
+| Zod request validation at /api/price and /api/export | ✅ |
 | Infra Modernization pillar (App Service / AKS / ACA / APIM / Front Door / ACR) | ⏳ TODO |
 | Data Platform pillar (Fabric / Synapse / Cosmos / SQL DB / ADLS / ADF / EH) | ⏳ TODO |
 | AI Application pillar (Azure OpenAI / AI Search / ML / GPU VMs / Cognitive) | ⏳ TODO |
@@ -48,6 +51,16 @@ npm run dev
 
 Open http://localhost:3000.
 
+## Scripts
+
+```bash
+npm run dev        # Next.js dev server
+npm run build      # production build
+npm run typecheck  # tsc --noEmit
+npm run test       # vitest (picker, bandwidth, sizer pure-function tests)
+npm run lint       # next lint
+```
+
 ## Deploy to Vercel
 
 1. Push the branch (or fork) to GitHub.
@@ -55,39 +68,52 @@ Open http://localhost:3000.
 3. Add `ANTHROPIC_API_KEY` to **Settings → Environment Variables**.
 4. Deploy.
 
-`vercel.json` raises the function timeout to 300s for `/api/extract` (large
-PDFs / spreadsheets may take ~60s through Sonnet). The default Hobby tier
-caps at 60s; you'll need Pro for full headroom on big inputs.
+### Tier requirements
+
+| | Hobby | Pro |
+|---|---|---|
+| Request body size | 4.5 MB | 4.5 MB (raise with [body size limits](https://vercel.com/docs/limits)) |
+| Function duration | 60 s default | 300 s configurable |
+| Recommended for | demo / single user | production with large PDFs |
+
+The UI enforces a **4 MB combined upload cap** to stay under the Hobby request
+body limit. Bigger PDFs / RVTools exports need Pro tier (and the Excel
+extraction can use the full 300 s `maxDuration` we set in `vercel.json`).
+
+The browser sends uploads as `multipart/form-data` (no base64 inflation),
+and the server reads file bytes via the standard `Request.formData()` API.
 
 ## Architecture
 
 ```
 app/
-  layout.tsx, page.tsx          ← single-page UI (upload, context, results)
+  layout.tsx, page.tsx          ← single-page UI (upload, context, results, reset)
   api/
-    classify/route.ts           ← Haiku-cascade workload classifier
-    extract/route.ts            ← Sonnet-cascade VM extractor (tool_use)
-    price/route.ts              ← Builds the lift-shift BOM via Retail API
-    export/route.ts             ← Excel/JSON download
+    classify/route.ts           ← multipart upload → Haiku-cascade classifier (per-file + aggregate)
+    extract/route.ts            ← multipart upload → Sonnet-cascade VM extractor (tool_use)
+    price/route.ts              ← Zod-validated JSON → lift-shift BOM via Retail API
+    export/route.ts             ← Zod-validated JSON → Excel download
 lib/
   models.ts                     ← BomLine / InventoryItem / AssessmentProfile types
   constants.ts                  ← Azure regions, labels, fallback map, modes
-  anthropic.ts                  ← SDK client + tier-cascade wrapper
+  anthropic.ts                  ← SDK client + tier-cascade wrapper (529 / 5xx → next tier)
   vm-catalog.ts                 ← Burstable + D-series + E-series catalog
   sizer.ts                      ← Right-sizing + disk ladder + tier routing
   parsers/
-    content.ts                  ← Normalize upload → Claude content blocks
-    classifier.ts               ← Haiku classifier with tool-use schema
+    content.ts                  ← Normalize upload → Claude content blocks (mammoth + exceljs)
+    classifier.ts               ← Haiku classifier + classifyMany aggregator (tool-use schema)
     inventory.ts                ← Sonnet inventory extractor (tool-use)
   pricing/
-    retail.ts                   ← Azure Retail Prices API client (vm/disk/sp/ri)
-    picker.ts                   ← cheapest_nonzero meter selectors
+    retail.ts                   ← Azure Retail Prices API client (vm/disk/sp/ri, regional + term fallback)
+    picker.ts                   ← cheapestNonzero meter selectors (skips $0 free-tier meters)
     bandwidth.ts                ← Tiered egress (100 GB free, 5-tier ladder)
   pillars/
-    lift-shift.ts               ← VM compute + managed disks BOM
+    lift-shift.ts               ← VM compute (grouped) + managed disks BOM + per-line fallback labeling
   output/
-    excel.ts                    ← Estimate + Cost Assumptions sheets (exceljs)
+    excel.ts                    ← Estimate + Cost Assumptions sheets (exceljs, server-side)
     pricing-calc.ts             ← Pricing Calculator import JSON
+tests/
+  picker.test.ts, bandwidth.test.ts, sizer.test.ts   ← 28 vitest assertions
 ```
 
 ## Pricing data

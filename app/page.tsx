@@ -4,23 +4,12 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { AZURE_REGIONS, DEFAULT_REGION, regionLabel } from "@/lib/constants";
 import type { AssessmentProfile, BomLine, ComputeMode, InventoryItem, PricingMode } from "@/lib/models";
 
-type UploadedFile = { name: string; size: number; data: string };
+// Vercel Hobby caps the HTTP request body at 4.5 MB; pasted text + small
+// multipart uploads sit well under that. Multi-file uploads share the
+// budget so we surface a clear error before the request fires.
+const MAX_TOTAL_UPLOAD_MB = 4;
 
-async function fileToBase64(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  let bin = "";
-  const bytes = new Uint8Array(buf);
-  for (let i = 0; i < bytes.byteLength; i += 1) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
-}
-
-function base64ToBlob(b64: string, type: string): Blob {
-  const bin = atob(b64);
-  const len = bin.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i += 1) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type });
-}
+type UploadedFile = { file: File };
 
 const PILLAR_LABELS: Record<string, string> = {
   infra_lift_shift: "🖥 Infra Lift-and-Shift",
@@ -33,6 +22,8 @@ const PILLAR_LABELS: Record<string, string> = {
   mixed: "Mixed",
   unknown: "Unknown",
 };
+
+interface PerFile { filename: string; profile: AssessmentProfile | null; error?: string }
 
 export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -49,63 +40,86 @@ export default function Page() {
   const [headroom, setHeadroom] = useState(1.0);
 
   const [profile, setProfile] = useState<AssessmentProfile | null>(null);
+  const [perFile, setPerFile] = useState<PerFile[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [lines, setLines] = useState<BomLine[]>([]);
   const [stage, setStage] = useState<"idle" | "classifying" | "extracting" | "pricing">("idle");
   const [error, setError] = useState<string>("");
   const [warnings, setWarnings] = useState<string[]>([]);
 
-  const onSelectFiles = useCallback(async (fileList: FileList | null) => {
+  const totalBytes = useMemo(() => {
+    let n = 0;
+    for (const f of files) n += f.file.size;
+    n += new TextEncoder().encode(pastedText).length;
+    return n;
+  }, [files, pastedText]);
+  const tooLarge = totalBytes > MAX_TOTAL_UPLOAD_MB * 1024 * 1024;
+
+  const onSelectFiles = useCallback((fileList: FileList | null) => {
     if (!fileList) return;
-    const next: UploadedFile[] = [];
-    for (const f of Array.from(fileList)) {
-      next.push({ name: f.name, size: f.size, data: await fileToBase64(f) });
-    }
+    const next: UploadedFile[] = Array.from(fileList).map((file) => ({ file }));
     setFiles((curr) => [...curr, ...next]);
   }, []);
 
   const removeFile = (i: number) => setFiles((curr) => curr.filter((_, idx) => idx !== i));
 
-  const submitFiles = useMemo(() => {
-    const out = [...files];
+  function buildFormData(): FormData | null {
+    const fd = new FormData();
+    let count = 0;
+    files.forEach((f, i) => {
+      fd.append(`file_${i}`, f.file, f.file.name);
+      count += 1;
+    });
     if (pastedText.trim()) {
-      out.push({
-        name: `pasted-content-${Date.now()}.txt`,
-        size: pastedText.length,
-        data: btoa(unescape(encodeURIComponent(pastedText))),
-      });
+      const blob = new Blob([pastedText], { type: "text/plain" });
+      fd.append(`pasted`, blob, `pasted-content-${Date.now()}.txt`);
+      count += 1;
     }
-    return out;
-  }, [files, pastedText]);
+    return count > 0 ? fd : null;
+  }
+
+  function resetAll() {
+    setFiles([]);
+    setPastedText("");
+    setProfile(null);
+    setPerFile([]);
+    setItems([]);
+    setLines([]);
+    setError("");
+    setWarnings([]);
+  }
 
   async function runClassify() {
-    if (submitFiles.length === 0) {
+    const fd = buildFormData();
+    if (!fd) {
       setError("Add at least one file or paste content before running.");
+      return;
+    }
+    if (tooLarge) {
+      setError(
+        `Combined upload size ${(totalBytes / 1024 / 1024).toFixed(1)} MB exceeds the ${MAX_TOTAL_UPLOAD_MB} MB limit.`,
+      );
       return;
     }
     setError("");
     setWarnings([]);
     setProfile(null);
+    setPerFile([]);
     setItems([]);
     setLines([]);
     setStage("classifying");
     try {
-      const resp = await fetch("/api/classify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file: submitFiles[0] }),
-      });
+      const resp = await fetch("/api/classify", { method: "POST", body: fd });
       if (!resp.ok) throw new Error(`Classify HTTP ${resp.status}: ${await resp.text()}`);
-      const data = (await resp.json()) as { profile: AssessmentProfile };
+      const data = (await resp.json()) as { profile: AssessmentProfile; perFile: PerFile[] };
       setProfile(data.profile);
+      setPerFile(data.perFile ?? []);
 
       if (data.profile.workloadType === "infra_lift_shift" || data.profile.needsVmExtraction) {
+        const fd2 = buildFormData();
+        if (!fd2) return;
         setStage("extracting");
-        const eResp = await fetch("/api/extract", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ files: submitFiles }),
-        });
+        const eResp = await fetch("/api/extract", { method: "POST", body: fd2 });
         if (!eResp.ok) throw new Error(`Extract HTTP ${eResp.status}: ${await eResp.text()}`);
         const eData = (await eResp.json()) as { items: InventoryItem[]; warnings: string[] };
         setItems(eData.items);
@@ -114,7 +128,7 @@ export default function Page() {
         setWarnings([
           `Detected pillar "${PILLAR_LABELS[data.profile.workloadType] ?? data.profile.workloadType}". ` +
             "Only the Infra Lift-and-Shift pillar is implemented in this TypeScript port. " +
-            "See README.md for the porting roadmap.",
+            "See README.md and docs/PORTING-ROADMAP.md.",
         ]);
       }
     } catch (e) {
@@ -172,8 +186,10 @@ export default function Page() {
       return;
     }
     const data = (await resp.json()) as { data: string; mime: string; filename: string };
-    const blob = base64ToBlob(data.data, data.mime);
-    triggerDownload(blob, data.filename);
+    const bin = atob(data.data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    triggerDownload(new Blob([bytes], { type: data.mime }), data.filename);
   }
 
   function downloadJson() {
@@ -203,8 +219,8 @@ export default function Page() {
       2,
     );
     const blob = new Blob([json], { type: "application/json" });
-    const fname = `azure-${appName.replace(/\s+/g, "-") || "assessment"}-${region}.json`;
-    triggerDownload(blob, fname);
+    const safeApp = appName.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-_]/g, "") || "assessment";
+    triggerDownload(blob, `azure-${safeApp}-${region}.json`);
   }
 
   const totalMonthly = useMemo(() => lines.reduce((s, l) => s + l.monthlyCost, 0), [lines]);
@@ -214,6 +230,9 @@ export default function Page() {
       <header className="hero">
         <span className="cloud">☁</span>
         <h1>Azure Cost Assessment</h1>
+        <div style={{ marginLeft: "auto" }}>
+          <button onClick={resetAll} title="Clear everything and start over">Reset</button>
+        </div>
       </header>
       <p className="subtitle">
         Upload anything — VM inventory, SIEM design doc, AI use-case, mixed architecture — get a live-priced Azure BOM.
@@ -229,6 +248,7 @@ export default function Page() {
         <h2 className="section-title">1. Upload workload description(s)</h2>
         <p className="section-caption">
           Excel / CSV / PDF / Word / image / plain text. PDFs and images are read natively by Claude.
+          Combined upload limit: {MAX_TOTAL_UPLOAD_MB} MB (Vercel Hobby tier).
         </p>
         <div
           className="dropzone"
@@ -243,7 +263,7 @@ export default function Page() {
           onDrop={(e) => {
             e.preventDefault();
             (e.currentTarget as HTMLDivElement).classList.remove("dragover");
-            void onSelectFiles(e.dataTransfer.files);
+            onSelectFiles(e.dataTransfer.files);
           }}
         >
           📁 Click or drop files here (xlsx, csv, pdf, docx, png, jpg, txt, md)
@@ -254,15 +274,15 @@ export default function Page() {
           multiple
           hidden
           accept=".xlsx,.xls,.csv,.pdf,.docx,.png,.jpg,.jpeg,.gif,.webp,.txt,.md,.json,.yml,.yaml,.log"
-          onChange={(e) => void onSelectFiles(e.target.files)}
+          onChange={(e) => onSelectFiles(e.target.files)}
         />
 
         {files.length > 0 && (
           <div className="file-list">
             {files.map((f, i) => (
-              <div className="file-row" key={`${f.name}-${i}`}>
-                <span>📎 {f.name}</span>
-                <span className="size">{(f.size / 1024).toFixed(1)} KB</span>
+              <div className="file-row" key={`${f.file.name}-${i}`}>
+                <span>📎 {f.file.name}</span>
+                <span className="size">{(f.file.size / 1024).toFixed(1)} KB</span>
                 <button onClick={() => removeFile(i)}>Remove</button>
               </div>
             ))}
@@ -280,6 +300,13 @@ export default function Page() {
             placeholder="Examples: 'We have 50 Linux VMs running PostgreSQL — 8 vCPU / 32 GB each…'"
           />
         </div>
+
+        {totalBytes > 0 && (
+          <div className="helper" style={{ marginTop: "0.5rem" }}>
+            Total upload: <strong>{(totalBytes / 1024 / 1024).toFixed(2)} MB</strong>
+            {tooLarge && <span style={{ color: "var(--danger)" }}> — over {MAX_TOTAL_UPLOAD_MB} MB limit</span>}
+          </div>
+        )}
       </section>
 
       {/* Step 2 — Context */}
@@ -380,7 +407,7 @@ export default function Page() {
       </section>
 
       <div className="actions">
-        <button className="primary" disabled={stage !== "idle"} onClick={() => void runClassify()}>
+        <button className="primary" disabled={stage !== "idle" || tooLarge} onClick={() => void runClassify()}>
           {stage === "classifying"
             ? <><span className="spinner" /> Classifying…</>
             : stage === "extracting"
@@ -403,6 +430,23 @@ export default function Page() {
             <strong>Complexity:</strong> {profile.complexity}
           </p>
           {profile.summary && <p className="helper" style={{ marginTop: "0.4rem" }}>{profile.summary}</p>}
+          {perFile.length > 1 && (
+            <details style={{ marginTop: "0.6rem" }}>
+              <summary>Per-file classification ({perFile.length} files)</summary>
+              <ul>
+                {perFile.map((p, i) => (
+                  <li key={i}>
+                    {p.error
+                      ? <>❌ <code>{p.filename}</code> — {p.error}</>
+                      : p.profile
+                        ? <>✅ <code>{p.filename}</code> — {PILLAR_LABELS[p.profile.workloadType] ?? p.profile.workloadType} · {(p.profile.confidence * 100).toFixed(0)}%</>
+                        : <>⚠️ <code>{p.filename}</code> — no profile</>
+                    }
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {profile.signals.length > 0 && (
             <details style={{ marginTop: "0.6rem" }}>
               <summary>Why this classification? ({profile.signals.length} signals)</summary>

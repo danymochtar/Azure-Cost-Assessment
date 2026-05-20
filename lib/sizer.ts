@@ -61,6 +61,8 @@ export function isSqlServer(item: InventoryItem): boolean {
     "mssql", "ms-sql", "ms_sql",
     "sql server", "sqlserver", "sql-server", "sql_server",
     "-sql-", "_sql_", " sql ",
+    "sql-prod", "sql-uat", "sql-dev", "sql-test",
+    "sql-cluster",
   ].some((t) => haystack.includes(t));
 }
 

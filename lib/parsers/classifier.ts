@@ -3,6 +3,11 @@ import { callWithCascade, getClient, HAIKU_TO_OPUS, type ModelId } from "../anth
 import type { AssessmentProfile, WorkloadType } from "../models";
 import { prepare } from "./content";
 
+export interface FileBlob {
+  name: string;
+  data: Buffer;
+}
+
 const SYSTEM_PROMPT = `You are an Azure solution architect triaging an uploaded file to decide which Azure pillar's cost assessment to run.
 
 Inspect the file preview (sheet names / column headers / a few sample rows / PDF pages / image / document text) and classify its workload intent into ONE of these pillars (or 'mixed' / 'unknown'):
@@ -129,4 +134,60 @@ export async function classify(
     signals: parsed.signals,
     summary: parsed.summary,
   };
+}
+
+export interface ClassificationResult {
+  filename: string;
+  profile: AssessmentProfile | null;
+  error?: string;
+}
+
+export async function classifyMany(
+  files: FileBlob[],
+  apiKey?: string,
+): Promise<{ perFile: ClassificationResult[]; aggregate: AssessmentProfile }> {
+  const perFile = await Promise.all(
+    files.map(async (f): Promise<ClassificationResult> => {
+      try {
+        const profile = await classify(f.data, f.name, apiKey);
+        return { filename: f.name, profile };
+      } catch (e) {
+        return { filename: f.name, profile: null, error: (e as Error).message };
+      }
+    }),
+  );
+
+  const valid = perFile.filter((p): p is ClassificationResult & { profile: AssessmentProfile } =>
+    p.profile !== null && p.profile.workloadType !== "unknown",
+  );
+
+  // Pick the highest-confidence non-unknown as primary; union suggested components;
+  // OR together needs_vm_extraction. Matches the Python aggregation in app.py:670-684.
+  let aggregate: AssessmentProfile;
+  if (valid.length > 0) {
+    const primary = valid.reduce((a, b) =>
+      a.profile.confidence >= b.profile.confidence ? a : b,
+    );
+    const allSuggested = new Set<string>();
+    for (const v of valid) {
+      for (const c of v.profile.suggestedComponents) allSuggested.add(c);
+    }
+    aggregate = {
+      ...primary.profile,
+      suggestedComponents: Array.from(allSuggested).sort(),
+      needsVmExtraction: valid.some((v) => v.profile.needsVmExtraction),
+    };
+  } else {
+    aggregate = {
+      workloadType: "unknown",
+      confidence: 0,
+      complexity: "moderate",
+      needsVmExtraction: false,
+      suggestedComponents: [],
+      signals: [],
+      summary: "All files failed to classify or returned 'unknown'.",
+    };
+  }
+
+  return { perFile, aggregate };
 }

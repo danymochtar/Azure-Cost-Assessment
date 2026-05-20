@@ -91,6 +91,8 @@ export async function buildLiftShiftBom(
 
   // VM compute lines
   for (const g of groups.values()) {
+    // Snapshot term fallback set so we can tell whether THIS lookup triggered one.
+    const fallbackKeyBefore = cli.termFallbacks.has(`${g.meta.arm}|${g.meta.billing}`);
     const rec = await cli.vmPrice(
       g.meta.arm,
       opts.region,
@@ -98,6 +100,13 @@ export async function buildLiftShiftBom(
       g.meta.billing,
       g.meta.ahb,
     );
+    const fellBackToPayg =
+      !fallbackKeyBefore &&
+      g.meta.billing !== "payg" &&
+      cli.termFallbacks.has(`${g.meta.arm}|${g.meta.billing}`);
+    const effectiveLabel = fellBackToPayg
+      ? `PAYG (${billingTermLabel(g.meta.billing)} unavailable in ${opts.region})`
+      : billingTermLabel(g.meta.billing);
     const perHour = rec?.retailPrice ?? 0;
     const monthlyPerVm = perHour * HOURS_PER_MONTH;
     const groupMonthly = monthlyPerVm * g.count;
@@ -120,12 +129,15 @@ export async function buildLiftShiftBom(
       serviceName: "Virtual Machines",
       customName: opts.appName ? `${opts.appName}-${g.meta.display}` : g.meta.display,
       resourceCount: g.count,
-      billingTerm: billingTermLabel(g.meta.billing),
+      billingTerm: effectiveLabel,
       assumption: rec
         ? `${g.count} x ${perHour.toFixed(4)}/hr x 730 hrs = ${groupMonthly.toFixed(2)}` +
           (g.meta.ahb ? " (AHB: priced as Linux)" : "") +
           (g.meta.env === "non-prod" && opts.nonProdPayg && opts.pricingMode !== "payg"
             ? " (non-prod kept on PAYG)"
+            : "") +
+          (fellBackToPayg
+            ? ` (${billingTermLabel(g.meta.billing)} not offered for this SKU in ${opts.region} — priced at PAYG)`
             : "")
         : `No retail meter found in region ${opts.region}. Line priced at $0.`,
     };
