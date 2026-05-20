@@ -1,144 +1,140 @@
 # Azure Cost Assessment
 
 Upload anything — VM inventory, SIEM design doc, AI use-case, data-platform
-spec, or a mixed architecture — and get a live-priced Azure estimate matching
-Microsoft's Azure Pricing Calculator export template.
+spec — and get a live-priced Azure estimate matching Microsoft's Azure
+Pricing Calculator export template.
 
-**Accepted file types:** Excel (.xlsx / .xls), CSV, PDF, images
-(.png / .jpg / .gif / .webp), Word (.docx), plain text / markdown
-(.txt / .md / .json / .yml / .yaml / .log).
+Built with **Next.js 15 (App Router) + TypeScript** and deployable to **Vercel**.
 
-PDFs and images are read natively by Claude (no OCR preprocessing). DOCX
-content — including embedded tables — is text-extracted via python-docx.
+> ### Status: TypeScript port in progress
+>
+> This repo was originally a Python / Streamlit app (≈13k LOC across 7 Azure
+> pillars). The TypeScript port currently delivers the **end-to-end VM
+> Infra Lift-and-Shift** flow only — upload → classify → AI extract → live
+> retail pricing → Excel + JSON export. The remaining 6 pillars are
+> **TODO** and tracked in [docs/PORTING-ROADMAP.md](docs/PORTING-ROADMAP.md).
 
-## What makes it different
+## What works today
 
-**Classify first, then price.** A cheap Haiku pass classifies the workload
-(vm_inventory / siem_soc / ai_ml / data_platform / app_modernization / mixed)
-before any expensive extraction runs. The expensive Opus pass only runs when
-the file is actually a VM inventory. For a SIEM use-case doc the app skips VM
-extraction entirely and goes straight to the Sentinel calculator — saving
-~95% on tokens vs a one-size-fits-all prompt.
+| Capability | Status |
+|---|---|
+| Multi-file upload (xlsx / csv / pdf / docx / images / text) | ✅ |
+| Claude Haiku classifier (cascades to Sonnet / Opus on overload) | ✅ |
+| Claude Sonnet VM inventory extraction (tool-use structured output) | ✅ |
+| Right-sizing (Burstable / D-series / E-series; AHB; non-prod PAYG) | ✅ |
+| Multi-disk per VM (Premium / Standard SSD / Standard HDD auto-routing) | ✅ |
+| Live Azure Retail Prices API with regional + term fallback | ✅ |
+| Billing terms: PAYG / SP 1Y / SP 3Y / RI 1Y / RI 3Y | ✅ |
+| Compute modes: Saving / Normal / High-Performance | ✅ |
+| Excel export (Pricing Calculator template) + JSON export | ✅ |
+| Infra Modernization pillar (App Service / AKS / ACA / APIM / Front Door / ACR) | ⏳ TODO |
+| Data Platform pillar (Fabric / Synapse / Cosmos / SQL DB / ADLS / ADF / EH) | ⏳ TODO |
+| AI Application pillar (Azure OpenAI / AI Search / ML / GPU VMs / Cognitive) | ⏳ TODO |
+| Azure Security pillar (Defender suite + Sentinel + WAF + Private Link) | ⏳ TODO |
+| Hybrid Multicloud pillar (Azure Arc + Defender across clouds) | ⏳ TODO |
+| M365 & Others pillar (M365 Backup / SharePoint Premium / Copilot Studio) | ⏳ TODO |
+| Landing Zone composer (Foundation / Standard / Enterprise presets) | ⏳ TODO |
+| HA / BCDR (Site Recovery + paired-region defaults) | ⏳ TODO |
+| Defender for Cloud always-on baseline | ⏳ TODO |
+| Auto-simulate (Sonnet pre-fills pillar inputs from doc) | ⏳ TODO |
 
-## Supported workload types
+## Run locally
 
-| Workload | Input | Line items produced |
-|---|---|---|
-| VM Inventory | RVTools, server list, infra spec, pivoted/key-value layouts, free-text specs | VM right-sizing, managed disks, optional LZ/HA/BCDR, Defender, Sentinel |
-| App Modernization | Same as VM, with Hybrid/PaaS strategy | Claude recommends Azure SQL DB / App Service / Cache per workload |
-| SIEM / SOC | Design doc / ingestion profile | Log Analytics (PAYG or commitment tier), Sentinel, retention, Defender CSPM |
-| AI / ML | Design doc / token volume | Azure OpenAI per-model input/output tokens |
-| Data Platform | Design doc / capacity needs | Microsoft Fabric capacity, Cosmos DB RU/s, Synapse DWU |
-| Mixed | Architecture doc with several | All relevant calculators combined |
+```bash
+npm install
+cp .env.example .env.local   # add your ANTHROPIC_API_KEY
+npm run dev
+```
 
-## Architecture knobs
+Open http://localhost:3000.
 
-- **Primary + Secondary region** (secondary only appears when HA or BCDR is on)
-- **Migration strategy**: Full IaaS / Hybrid (Azure SQL DB-first, MI only when needed) / Full PaaS
-- **Landing zone** with per-component checkboxes: Public IP, ExpressRoute (circuit + gateway), Azure Firewall, Bastion, VPN Gateway, App Gateway WAF v2, Log Analytics, Key Vault, Azure Backup
-- **HA**: 2× compute + Standard Load Balancer; PaaS recommendations become zone-redundant (SQL BC with Always On, App Service ZR)
-- **BCDR**: Azure Site Recovery (priced in secondary region) + GRS backup storage
-- **Security** (per-component checkboxes): Defender CSPM, Defender for Servers P2 + SQL/Storage/App Service/Key Vault/Containers, Microsoft Sentinel
-- **Dynamic sizing**: Azure Backup as % of total disk; Log Analytics as MB/day/VM × VM count × 30
+## Deploy to Vercel
+
+1. Push the branch (or fork) to GitHub.
+2. Import the repo at https://vercel.com/new.
+3. Add `ANTHROPIC_API_KEY` to **Settings → Environment Variables**.
+4. Deploy.
+
+`vercel.json` raises the function timeout to 300s for `/api/extract` (large
+PDFs / spreadsheets may take ~60s through Sonnet). The default Hobby tier
+caps at 60s; you'll need Pro for full headroom on big inputs.
+
+## Architecture
+
+```
+app/
+  layout.tsx, page.tsx          ← single-page UI (upload, context, results)
+  api/
+    classify/route.ts           ← Haiku-cascade workload classifier
+    extract/route.ts            ← Sonnet-cascade VM extractor (tool_use)
+    price/route.ts              ← Builds the lift-shift BOM via Retail API
+    export/route.ts             ← Excel/JSON download
+lib/
+  models.ts                     ← BomLine / InventoryItem / AssessmentProfile types
+  constants.ts                  ← Azure regions, labels, fallback map, modes
+  anthropic.ts                  ← SDK client + tier-cascade wrapper
+  vm-catalog.ts                 ← Burstable + D-series + E-series catalog
+  sizer.ts                      ← Right-sizing + disk ladder + tier routing
+  parsers/
+    content.ts                  ← Normalize upload → Claude content blocks
+    classifier.ts               ← Haiku classifier with tool-use schema
+    inventory.ts                ← Sonnet inventory extractor (tool-use)
+  pricing/
+    retail.ts                   ← Azure Retail Prices API client (vm/disk/sp/ri)
+    picker.ts                   ← cheapest_nonzero meter selectors
+    bandwidth.ts                ← Tiered egress (100 GB free, 5-tier ladder)
+  pillars/
+    lift-shift.ts               ← VM compute + managed disks BOM
+  output/
+    excel.ts                    ← Estimate + Cost Assumptions sheets (exceljs)
+    pricing-calc.ts             ← Pricing Calculator import JSON
+```
 
 ## Pricing data
 
 All prices come live from the public Azure Retail Prices API
 (`https://prices.azure.com/api/retail/prices`) — no authentication needed.
-Retail ≠ your negotiated EA/MCA/CSP pricing; apply your discount in the
-exported Excel.
+Retail ≠ your negotiated EA / MCA / CSP pricing; apply your discount in
+the exported Excel.
 
-## Run locally
+Regional fallback is transparent: a request that returns no records for a
+new region (e.g. `malaysiawest`) automatically retries against the
+geo-paired region (`southeastasia`) and the swap is surfaced in the UI.
 
-```bash
-pip install -r requirements.txt
-streamlit run app.py
+## Pillar contract (for porting follow-ups)
+
+Each pillar lives in `lib/pillars/<key>.ts` and exposes:
+
+```ts
+export async function build<Pillar>Bom(
+  items: InventoryItem[] | <pillar-specific-input>,
+  opts: <PillarOptions>,
+  client?: RetailPricesClient,
+): Promise<{ lines: BomLine[]; ... }>;
 ```
 
-## Deploy to Streamlit Cloud
-
-1. Push the branch. Go to https://share.streamlit.io.
-2. New app → pick this repo → Main file: `app.py` → Deploy.
-3. In **Settings → Secrets**:
-
-```toml
-ANTHROPIC_API_KEY = "sk-ant-..."
-```
-
-## Output
-
-- **Excel** with a single `Estimate` sheet matching Microsoft's Azure Pricing
-  Calculator Export template — columns: Service category, Service name, Type,
-  Custom name, Region, Description, Estimated upfront cost, Estimated monthly
-  cost. The workload name you provide prefixes every Custom name.
-- **Pricing Calculator import JSON** with `productId` / `skuId` / `meterId` per
-  line, for programmatic reproduction.
-- **Deep links** to the per-product pages in the live Azure Pricing Calculator.
-
-## Calculator parity
-
-This app aims for ≤5 % variance from the live Azure Pricing Calculator for
-common scenarios. `scripts/verify_calculations.py` codifies reference
-scenarios and flags regressions:
-
-```bash
-python scripts/verify_calculations.py --region malaysiawest          # report-only
-python scripts/verify_calculations.py --region eastus --strict        # exit non-zero on fail
-```
-
-Covered reference scenarios: 3× D4s v5 Linux PAYG, 3× D4s v5 Windows + AHB
-(should equal Linux PAYG), RI 1Y vs PAYG discount ratio, Fabric F64,
-Sentinel 50 GB/day PAYG, tiered bandwidth egress (10 TB), Azure OpenAI
-GPT-4o-mini token spend.
-
-### Tier 1 math fixes shipped in this revision
-
-- **Bandwidth egress** uses the MS tier ladder (first 100 GB free;
-  0-10 TB / 10-50 TB / 50-150 TB / 150-500 TB / 500 TB+) via
-  `src/pricing/bandwidth.py`, instead of flat-rate × GB.
-- **Azure Backup** is split into two lines — per-VM protected instance fee
-  (auto-populated from lift-shift VM count) AND per-GB storage.
-- **App Gateway WAF v2** bills BOTH the base instance hour AND the
-  Capacity Units (default 2 CU, configurable).
-- **Azure Firewall** adds an optional per-GB processed line when the
-  data-processed input is > 0.
-- **Cognitive Services** now has a `meter_unit_divisor` per service so the
-  user can enter raw transactions/pages — we convert to billable units
-  (per-1K for Vision / Doc Intelligence / Content Safety / Custom Vision)
-  before pricing.
-
-### Tier 2 services added
-
-Landing zone: **NAT Gateway** (Standard). Security: **DDoS Protection
-Standard** (IP Protection per-IP + Network Protection plan).
-Data Platform: **Azure SQL Managed Instance** (GP/BC tiers, honors AHB),
-**Azure Database for PostgreSQL Flexible Server**, **Azure Database for
-MySQL Flexible Server**, **Azure Cache for Redis** (Basic → Enterprise
-Flash), **Azure Files** (Standard / Premium, LRS/ZRS/GRS). App
-Modernization: **Azure Service Bus** (Basic / Standard / Premium).
-
-### What's NOT yet modelled (follow-up)
-
-- Reserved capacity for non-VM services (Cosmos RI, SQL DB RI, Synapse RI,
-  Databricks RI)
-- Enterprise Agreement / CSP commitment discount percentage
-- Spot VM pricing (PAYG / SP / RI only today)
-- Dev/Test subscription discount flag
-- Blob Storage tiers (Hot/Cool/Cold/Archive) with transaction ops
-- IoT Hub, Logic Apps, Event Grid, Service Bus Relay, Azure Automation
-- Azure Stack HCI licensing, Azure VMware Solution, Dedicated Hosts
-
----
+The Python source at the pre-port commit
+[`0874b38`](https://github.com/danymochtar/azure-cost-assessment/commit/0874b38)
+has the full business logic for each pillar — use it as the reference
+spec when porting. The CHANGELOG.md captures audit-batch history.
 
 ## Security & data handling
 
-- API keys are held in Streamlit session memory only. Never written to disk.
-- When AI features are enabled, a preview of the uploaded file (headers +
-  sample rows, or full content for files ≤500 rows) is sent to Anthropic.
-  Remove sensitive data (passwords, PII, production hostnames) before upload.
+- API keys live in environment variables only (`.env.local` /
+  Vercel project secrets). Never committed.
+- When AI features run, the uploaded file (or a 5-row preview for the
+  classifier) is sent to Anthropic. Strip secrets / PII before upload.
   Anthropic does not train on API inputs per their terms.
-- All structured outputs are Pydantic-validated before use.
-- The heuristic `row_filter` field on the mapping parser deliberately does NOT
-  evaluate pandas queries — `pd.DataFrame.query()` is eval-based and is not
-  safe against a prompt-injected preview.
-- Azure Retail Prices API is public and requires no data from the user.
+- All structured outputs are validated with Zod schemas before use.
+- The Excel export is generated server-side with `exceljs`; the client
+  receives a base64 payload and downloads it locally — no third-party
+  storage.
+
+## Comparison vs the original Streamlit app
+
+The Python app's `scripts/verify_calculations.py` codified reference
+scenarios (3× D4s v5 Linux PAYG, AHB Linux-equivalent, RI 1Y vs PAYG
+discount ratio, Fabric F64, Sentinel 50 GB/day, tiered egress at 10 TB,
+GPT-4o-mini token spend) with a ±2% drift tolerance. Porting that
+harness is on the roadmap so this TS rewrite can be verified against
+the same ground truth.

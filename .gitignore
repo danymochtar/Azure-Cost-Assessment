@@ -1,10 +1,28 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
+# Next.js / Node
+node_modules/
+.next/
+out/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts.bak
+
+# Env
 .env
-.streamlit/secrets.toml
+.env.local
+.env.development.local
+.env.production.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Generated outputs
 *.xlsx
 !samples/*.xlsx
-.DS_Store
