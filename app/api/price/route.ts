@@ -7,6 +7,12 @@ import {
   type LandingZoneTier,
 } from "@/lib/pillars/landing-zone";
 import { buildBcdrBom } from "@/lib/pillars/bcdr";
+import { buildModernizationBom } from "@/lib/pillars/modernization";
+import { buildDataPlatformBom } from "@/lib/pillars/data-platform";
+import { buildAiApplicationBom } from "@/lib/pillars/ai-application";
+import { buildAzureSecurityBom } from "@/lib/pillars/azure-security";
+import { buildHybridMulticloudBom } from "@/lib/pillars/hybrid-multicloud";
+import { buildM365AndOthersBom } from "@/lib/pillars/m365-and-others";
 import type { InventoryItem, Notice } from "@/lib/models";
 import { RetailPricesClient } from "@/lib/pricing/retail";
 
@@ -47,6 +53,10 @@ const OptionsSchema = z.object({
   headroom: z.number().min(1.0).max(2.0),
   landingZoneTier: z.enum(["none", "basic", "standard", "enterprise"]).default("none"),
   enableBcdr: z.boolean().default(false),
+  // Solution Areas in scope. Lift-shift always priced from the VM
+  // inventory; the others emit pillar-specific baseline BOMs only when
+  // ticked in Stage 2.
+  activePillars: z.array(z.string()).default([]),
   // When `landingZoneComponents` is present (length > 0) the route uses
   // the explicit id list instead of the tier preset — that's how the
   // "Customize components" UI surfaces its picks.
@@ -100,7 +110,22 @@ export async function POST(req: Request) {
           appName: body.options.appName,
         })
       : [];
-    const lines = [...lzLines, ...workloadLines, ...bcdrLines];
+
+    // Pillar-specific baseline BOMs — emitted only when the user
+    // explicitly ticked the pillar in Stage 2. Lift-and-shift is
+    // already covered by `workloadLines` above.
+    const active = new Set(body.options.activePillars);
+    const region = body.options.region;
+    const appName = body.options.appName;
+    const pillarLines: typeof workloadLines = [];
+    if (active.has("infra_modernization")) pillarLines.push(...buildModernizationBom(region, appName));
+    if (active.has("data_platform"))       pillarLines.push(...buildDataPlatformBom(region, appName));
+    if (active.has("ai_application"))      pillarLines.push(...buildAiApplicationBom(region, appName));
+    if (active.has("azure_security"))      pillarLines.push(...buildAzureSecurityBom(region, appName));
+    if (active.has("hybrid_multicloud"))   pillarLines.push(...buildHybridMulticloudBom(body.items as InventoryItem[], region, appName));
+    if (active.has("m365_and_others"))     pillarLines.push(...buildM365AndOthersBom(region, appName));
+
+    const lines = [...lzLines, ...workloadLines, ...pillarLines, ...bcdrLines];
 
     const notices: Notice[] = [];
     if (client.fallbacksUsed.size > 0) {

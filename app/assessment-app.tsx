@@ -54,7 +54,18 @@ const ALL_PILLARS = [
 ] as const;
 type PillarKey = (typeof ALL_PILLARS)[number];
 
-const PORTED_PILLARS: ReadonlySet<string> = new Set(["infra_lift_shift"]);
+// All seven Solution-Area pillars now have baseline pricing modules in
+// `lib/pillars/*.ts`. Lift-and-shift is computed from the VM inventory;
+// the rest emit opinionated default lines that the customer refines.
+const PORTED_PILLARS: ReadonlySet<string> = new Set([
+  "infra_lift_shift",
+  "infra_modernization",
+  "data_platform",
+  "ai_application",
+  "azure_security",
+  "hybrid_multicloud",
+  "m365_and_others",
+]);
 
 // Map a `suggested_components` key (returned by the classifier) → owning
 // pillar. Mirrors the COMPONENT_TO_PILLAR mapping from the Python source
@@ -749,6 +760,7 @@ export default function AssessmentApp({ user }: { user: string }) {
             landingZoneTier,
             landingZoneComponents: lzCustomize ? Array.from(lzComponents) : undefined,
             enableBcdr,
+            activePillars: Array.from(activePillars),
           },
         }),
       });
