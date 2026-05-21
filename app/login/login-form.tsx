@@ -7,7 +7,7 @@ import { Lock, AlertCircle, Cloud, LogIn, UserPlus } from "lucide-react";
 
 export default function LoginForm({ next }: { next: string }) {
   const router = useRouter();
-  const [user, setUser] = useState("admin");
+  const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -67,6 +67,7 @@ export default function LoginForm({ next }: { next: string }) {
               autoCorrect="off"
               value={user}
               onChange={(e) => setUser(e.target.value)}
+              placeholder="Your username"
               required
             />
           </div>
