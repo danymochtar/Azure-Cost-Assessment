@@ -55,4 +55,20 @@ describe("parseCsv — pivoted layouts", () => {
     expect(new Set(headers).size).toBe(2);
     expect(Object.values(rows[0])).toEqual(["vm1", "vm2"]);
   });
+
+  it("drops wholly-blank rows so sparse exports don't pad the preview", () => {
+    const csv = [
+      "Name,vCPU,RAM",
+      "vm1,2,4",
+      ",,",
+      "   ,  ,  ",
+      "vm2,4,8",
+    ].join("\n");
+
+    const { rows } = parseCsv(csv);
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0].Name).toBe("vm1");
+    expect(rows[1].Name).toBe("vm2");
+  });
 });
