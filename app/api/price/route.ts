@@ -60,6 +60,7 @@ export async function POST(req: Request) {
       body.options.landingZoneTier as LandingZoneTier,
       body.options.region,
       body.options.appName,
+      body.items as InventoryItem[],
     );
     const lines = [...lzLines, ...workloadLines];
 
