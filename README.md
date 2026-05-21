@@ -68,12 +68,14 @@ The bootstrap admin works out of the box as `admin` / `noventiq` — no
 env-var configuration needed. Set `DATABASE_URL` to enable multi-user
 registration, password reset, and saved projects.
 
-### Database setup (one-shot)
+### Database setup
 
-Run this once per fresh DB to create the `users` and `projects` tables:
+The repo ships with a Prisma migration (`prisma/migrations/0001_init`)
+that creates the `users` and `projects` tables. Apply it once per fresh
+DB:
 
 ```bash
-DATABASE_URL='postgresql://USER:PASS@HOST:5432/DB' npx prisma db push
+DATABASE_URL='postgresql://USER:PASS@HOST:5432/DB' npx prisma migrate deploy
 ```
 
 Tables created: `users` (id, username, password_hash, timestamps) and
@@ -81,10 +83,11 @@ Tables created: `users` (id, username, password_hash, timestamps) and
 extracted inventory, and last computed BOM as JSONB). The Prisma schema
 lives at `prisma/schema.prisma`.
 
-On Vercel: add `DATABASE_URL` to project env vars. The build runs
-`prisma generate` automatically (postinstall hook). Schema changes
-need a manual `prisma db push` against the production DB after
-deploy — there's no migrate-on-deploy step.
+On Vercel: add `DATABASE_URL` to project env vars. The build command
+runs `prisma migrate deploy` automatically (skipped when `DATABASE_URL`
+is unset), so committing a new migration to `prisma/migrations/` is
+all that's needed to roll out schema changes — no manual step after
+deploy. `prisma generate` still runs via the postinstall hook.
 
 ### Saved projects
 
