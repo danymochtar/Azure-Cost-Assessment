@@ -39,6 +39,11 @@ export interface BomLine {
   sku: string;
   meter: string;
   region: string;
+  /** Source VM / workload names that this BOM line represents — so a
+   *  grouped "D8s v5 (Windows) x8" line can list the eight underlying
+   *  hostnames. Empty for platform components (Landing Zone, ASR) that
+   *  aren't tied to a specific workload. */
+  workloadNames?: string[];
   quantity: number;
   unit: string;
   unitPrice: number;
@@ -76,6 +81,7 @@ export function emptyBomLine(): BomLine {
     resourceCount: 1,
     billingTerm: "PAYG",
     assumption: "",
+    workloadNames: [],
   };
 }
 
