@@ -706,9 +706,9 @@ footer {
 .kbd-stack > * + * { margin-top: 0.6rem; }
 
 /* =============================================================================
- * Phase header — replaces the plain numbered circle with a lucide icon tile
+ * Stage header — replaces the plain numbered circle with a lucide icon tile
  * ============================================================================= */
-.section-head .phase-icon {
+.section-head .stage-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -719,7 +719,7 @@ footer {
   color: var(--accent);
   flex-shrink: 0;
 }
-.section-head .phase-label {
+.section-head .stage-label {
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -728,7 +728,7 @@ footer {
   display: block;
   margin-bottom: 0.1rem;
 }
-.section-head .phase-title {
+.section-head .stage-title {
   display: flex;
   flex-direction: column;
 }
@@ -954,6 +954,37 @@ footer {
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+/* Microsoft Solution Area grouping inside the pillar picker. */
+.solution-areas {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.solution-area {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.7rem;
+}
+.solution-area-head {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0.2rem;
+}
+.solution-area-head strong {
+  font-size: 0.82rem;
+  color: var(--text);
+  font-weight: 600;
+}
+.solution-area-blurb {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.3;
+  margin-top: 1px;
+}
+.solution-area .pillar-list { gap: 0; }
+.solution-area .pillar-row { padding: 0.3rem 0; }
 
 /* =============================================================================
  * Scope note — Phase 3 banner that lists the active pillars + flags

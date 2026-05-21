@@ -107,6 +107,56 @@ const COMPONENT_TO_PILLAR: Record<string, PillarKey> = {
   other_marketplace: "m365_and_others",
 };
 
+/**
+ * Microsoft Solution Areas — the official Microsoft taxonomy used to
+ * categorise Azure / M365 / D365 projects in the partner ecosystem.
+ *
+ * Reference: https://learn.microsoft.com/en-us/partner-center/membership/
+ * (Solution Areas: Azure Infrastructure, Digital & App Innovation,
+ *  Data & AI, Security, Modern Work, Business Applications.)
+ *
+ * The 7 internal pillar keys map into 5 Solution Areas. The "Modern
+ * Work" and "Business Applications" Solution Areas are merged here
+ * since they share a single TS pillar (m365_and_others).
+ */
+const SOLUTION_AREAS = [
+  {
+    key: "azure_infrastructure",
+    label: "Azure Infrastructure",
+    blurb: "Migrate-to-Azure, hybrid, multicloud, DR",
+    pillars: ["infra_lift_shift", "hybrid_multicloud"],
+  },
+  {
+    key: "digital_app_innovation",
+    label: "Digital & App Innovation",
+    blurb: "App modernization, AKS, App Service, APIs",
+    pillars: ["infra_modernization"],
+  },
+  {
+    key: "data_and_ai",
+    label: "Data & AI",
+    blurb: "Fabric, Synapse, Cosmos, Azure OpenAI, ML",
+    pillars: ["data_platform", "ai_application"],
+  },
+  {
+    key: "security",
+    label: "Security",
+    blurb: "Defender, Sentinel, Entra, Purview",
+    pillars: ["azure_security"],
+  },
+  {
+    key: "modern_work_business_apps",
+    label: "Modern Work & Business Apps",
+    blurb: "M365 Backup, SharePoint Premium, Copilot Studio",
+    pillars: ["m365_and_others"],
+  },
+] as const satisfies ReadonlyArray<{
+  key: string;
+  label: string;
+  blurb: string;
+  pillars: readonly PillarKey[];
+}>;
+
 function seedPillarsFromProfile(p: AssessmentProfile): Set<PillarKey> {
   const seeded = new Set<PillarKey>();
   if (
@@ -164,6 +214,11 @@ export default function AssessmentApp({ user }: { user: string }) {
   // Snapshot of what the classifier auto-detected — so we can render a
   // "(detected)" badge for those and not for ones the user added manually.
   const [detectedPillars, setDetectedPillars] = useState<Set<PillarKey>>(new Set());
+  // Explicit stage confirmations. Each stage requires the user to hit
+  // its confirm button before the next stage unlocks. Earlier stages
+  // remain editable; the user just re-confirms to propagate changes.
+  const [stage1Confirmed, setStage1Confirmed] = useState(false);
+  const [stage2Confirmed, setStage2Confirmed] = useState(false);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [lines, setLines] = useState<BomLine[]>([]);
   const [stage, setStage] = useState<"idle" | "classifying" | "extracting" | "pricing">("idle");
@@ -207,6 +262,8 @@ export default function AssessmentApp({ user }: { user: string }) {
     setPerFile([]);
     setActivePillars(new Set());
     setDetectedPillars(new Set());
+    setStage1Confirmed(false);
+    setStage2Confirmed(false);
     setItems([]);
     setLines([]);
     setError("");
@@ -245,6 +302,11 @@ export default function AssessmentApp({ user }: { user: string }) {
       const seeded = seedPillarsFromProfile(data.profile);
       setActivePillars(seeded);
       setDetectedPillars(new Set(seeded));
+      // Stage 1 complete — unlock Stage 2. Reset Stage 2 confirmation
+      // so the user has to explicitly accept the new scope before
+      // Stage 3 reappears.
+      setStage1Confirmed(true);
+      setStage2Confirmed(false);
 
       if (data.profile.workloadType === "infra_lift_shift" || data.profile.needsVmExtraction) {
         const fd2 = buildFormData();
@@ -374,16 +436,18 @@ export default function AssessmentApp({ user }: { user: string }) {
       ))}
 
       {/* ============================================================
-         Phase 1 — Assess
+         Stage 1 — Gather information
+         Upload files, paste content, name the project. The CTA
+         triggers classification + extraction and unlocks Stage 2.
          ============================================================ */}
       <section className="card">
         <div className="section-head">
-          <span className="phase-icon" aria-hidden>
+          <span className="stage-icon" aria-hidden>
             <Search size={18} strokeWidth={2.2} />
           </span>
-          <span className="phase-title">
-            <span className="phase-label">Phase 1</span>
-            <h2>Assess workload</h2>
+          <span className="stage-title">
+            <span className="stage-label">Stage 1</span>
+            <h2>Gather information</h2>
           </span>
         </div>
 
@@ -455,7 +519,26 @@ export default function AssessmentApp({ user }: { user: string }) {
           </div>
         )}
 
-        {/* Phase 1 CTA — only appears here. Advances the flow to Phase 2. */}
+        {/* Application name lives in Stage 1 — it's project metadata,
+            not a design choice. Tagged into every BOM line for export. */}
+        <div className="field" style={{ marginTop: "1rem" }}>
+          <label className="field-label" htmlFor="appName">
+            Application / project name
+            <Tooltip
+              label="Application name"
+              content="Tagged into the Custom name column of every line in the Excel export so multi-project BOMs stay traceable."
+            />
+          </label>
+          <input
+            id="appName"
+            type="text"
+            value={appName}
+            onChange={(e) => setAppName(e.target.value)}
+            placeholder="e.g. ERPSuite, FraudAI"
+          />
+        </div>
+
+        {/* Stage 1 CTA — kicks off classification + extraction. */}
         <div style={{ marginTop: "1.25rem" }}>
           <button
             className="primary"
@@ -466,97 +549,122 @@ export default function AssessmentApp({ user }: { user: string }) {
             {stage === "classifying" || stage === "extracting" ? (
               <><Loader2 size={16} className="spin" /> {loadingLabel(stage)}</>
             ) : (
-              <><Sparkles size={16} /> Analyze workload</>
+              <><Sparkles size={16} /> {stage1Confirmed ? "Re-analyze workload" : "Confirm inputs · Analyze"}</>
             )}
           </button>
         </div>
+      </section>
 
-        {/* Detected workload + extracted resources fold into Phase 1 */}
-        {profile && (
-          <div style={{ marginTop: "1.25rem" }}>
-            <h3 style={{ marginBottom: "0.5rem" }}>Detected workload</h3>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-              <span className="badge">
-                <BadgeCheck size={12} /> {detectedLabel}
-              </span>
-              <span className="badge muted">Confidence {(profile.confidence * 100).toFixed(0)}%</span>
-              <span className="badge muted">Complexity {profile.complexity}</span>
-              {!PORTED_PILLARS.has(profile.workloadType as PillarKey) && profile.workloadType !== "unknown" && (
-                <span className="badge danger">Pillar not yet priced</span>
-              )}
-            </div>
-            {profile.summary && (
-              <p className="helper" style={{ marginTop: "0.5rem" }}>{profile.summary}</p>
-            )}
+      {/* ============================================================
+         Stage 2 — Workload classification
+         Gated: only appears once Stage 1's analyze succeeded.
+         Lets the user accept or refine the AI's classification before
+         moving on to Design parameters.
+         ============================================================ */}
+      {stage1Confirmed && profile && (
+      <section className="card">
+        <div className="section-head">
+          <span className="stage-icon" aria-hidden>
+            <Receipt size={18} strokeWidth={2.2} />
+          </span>
+          <span className="stage-title">
+            <span className="stage-label">Stage 2</span>
+            <h2>Workload classification</h2>
+          </span>
+        </div>
 
-            {/* Pillars in scope — multi-select. Pre-ticked from classifier output;
-                user can add/remove for mixed-workload assessments. */}
-            <div className="pillar-picker">
-              <div className="pillar-picker-head">
-                <h4>
-                  Pillars in scope
-                  <Tooltip
-                    label="Pillars in scope"
-                    content="The AI pre-ticked pillars it detected. Add or remove pillars to broaden the scope for a mixed project — e.g. lift-and-shift combined with data platform, AI app, security, or hybrid multicloud. Pillars marked 'not yet priced' will be recorded as scope but won't add line items to the BOM yet."
-                  />
-                </h4>
-                <span className="badge muted">{activePillars.size} of {ALL_PILLARS.length}</span>
-              </div>
-              <div className="pillar-list">
-                {ALL_PILLARS.map((pk) => {
-                  const active = activePillars.has(pk);
-                  const wasDetected = detectedPillars.has(pk);
-                  const ported = PORTED_PILLARS.has(pk);
-                  return (
-                    <label key={pk} className="checkbox-row pillar-row">
-                      <input
-                        type="checkbox"
-                        checked={active}
-                        onChange={(e) => {
-                          setActivePillars((curr) => {
-                            const next = new Set(curr);
-                            if (e.target.checked) next.add(pk);
-                            else next.delete(pk);
-                            return next;
-                          });
-                        }}
-                      />
-                      <span className="pillar-name">{PILLAR_LABELS[pk]}</span>
-                      {wasDetected && <span className="badge success">detected</span>}
-                      {!ported && <span className="badge muted">not yet priced</span>}
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            {perFile.length > 1 && (
-              <details>
-                <summary>Per-file classification ({perFile.length} files)</summary>
-                <ul>
-                  {perFile.map((p, i) => (
-                    <li key={i}>
-                      {p.error ? (
-                        <><AlertCircle size={12} style={{ verticalAlign: "middle", color: "var(--danger)" }} /> <code>{p.filename}</code> — {p.error}</>
-                      ) : p.profile ? (
-                        <><BadgeCheck size={12} style={{ verticalAlign: "middle", color: "var(--success)" }} /> <code>{p.filename}</code> — {PILLAR_LABELS[p.profile.workloadType] ?? p.profile.workloadType} · {(p.profile.confidence * 100).toFixed(0)}%</>
-                      ) : (
-                        <><AlertTriangle size={12} style={{ verticalAlign: "middle" }} /> <code>{p.filename}</code> — no profile</>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            {profile.signals.length > 0 && (
-              <details>
-                <summary>Why this classification? ({profile.signals.length} signals)</summary>
-                <ul>{profile.signals.map((s, i) => <li key={i}>{s}</li>)}</ul>
-              </details>
-            )}
-          </div>
+        <h3 style={{ marginBottom: "0.5rem" }}>Detected by AI</h3>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+          <span className="badge">
+            <BadgeCheck size={12} /> {detectedLabel}
+          </span>
+          <span className="badge muted">Confidence {(profile.confidence * 100).toFixed(0)}%</span>
+          <span className="badge muted">Complexity {profile.complexity}</span>
+          {!PORTED_PILLARS.has(profile.workloadType) && profile.workloadType !== "unknown" && (
+            <span className="badge danger">Pillar not yet priced</span>
+          )}
+        </div>
+        {profile.summary && (
+          <p className="helper" style={{ marginTop: "0.5rem" }}>{profile.summary}</p>
         )}
 
+        {/* Microsoft Solution Areas — grouped pillar picker. */}
+        <div className="pillar-picker">
+          <div className="pillar-picker-head">
+            <h4>
+              Solution areas in scope
+              <Tooltip
+                label="Microsoft Solution Areas"
+                content="Microsoft's official Solution Area taxonomy: Azure Infrastructure, Digital & App Innovation, Data & AI, Security, Modern Work & Business Apps. The AI pre-ticked what it detected; expand or trim for a mixed project. Pillars marked 'not yet priced' are recorded as scope but won't add BOM lines yet."
+              />
+            </h4>
+            <span className="badge muted">{activePillars.size} of {ALL_PILLARS.length}</span>
+          </div>
+          <div className="solution-areas">
+            {SOLUTION_AREAS.map((sa) => (
+              <div className="solution-area" key={sa.key}>
+                <div className="solution-area-head">
+                  <strong>{sa.label}</strong>
+                  <span className="solution-area-blurb">{sa.blurb}</span>
+                </div>
+                <div className="pillar-list">
+                  {sa.pillars.map((pk) => {
+                    const active = activePillars.has(pk);
+                    const wasDetected = detectedPillars.has(pk);
+                    const ported = PORTED_PILLARS.has(pk);
+                    return (
+                      <label key={pk} className="checkbox-row pillar-row">
+                        <input
+                          type="checkbox"
+                          checked={active}
+                          onChange={(e) => {
+                            setActivePillars((curr) => {
+                              const next = new Set(curr);
+                              if (e.target.checked) next.add(pk);
+                              else next.delete(pk);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span className="pillar-name">{PILLAR_LABELS[pk]}</span>
+                        {wasDetected && <span className="badge success">detected</span>}
+                        {!ported && <span className="badge muted">not yet priced</span>}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {perFile.length > 1 && (
+          <details>
+            <summary>Per-file classification ({perFile.length} files)</summary>
+            <ul>
+              {perFile.map((p, i) => (
+                <li key={i}>
+                  {p.error ? (
+                    <><AlertCircle size={12} style={{ verticalAlign: "middle", color: "var(--danger)" }} /> <code>{p.filename}</code> — {p.error}</>
+                  ) : p.profile ? (
+                    <><BadgeCheck size={12} style={{ verticalAlign: "middle", color: "var(--success)" }} /> <code>{p.filename}</code> — {PILLAR_LABELS[p.profile.workloadType] ?? p.profile.workloadType} · {(p.profile.confidence * 100).toFixed(0)}%</>
+                  ) : (
+                    <><AlertTriangle size={12} style={{ verticalAlign: "middle" }} /> <code>{p.filename}</code> — no profile</>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {profile.signals.length > 0 && (
+          <details>
+            <summary>Why this classification? ({profile.signals.length} signals)</summary>
+            <ul>{profile.signals.map((s, i) => <li key={i}>{s}</li>)}</ul>
+          </details>
+        )}
+
+        {/* Extracted resources fold into Stage 2 so the user can sanity-
+            check the inventory before moving to Design parameters. */}
         {items.length > 0 && (
           <div style={{ marginTop: "1.25rem" }}>
             <h3 style={{ marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -593,35 +701,38 @@ export default function AssessmentApp({ user }: { user: string }) {
             </div>
           </div>
         )}
+
+        {/* Stage 2 CTA — advances the flow to Stage 3. */}
+        <div style={{ marginTop: "1.25rem" }}>
+          <button
+            className="primary"
+            style={{ width: "100%" }}
+            disabled={activePillars.size === 0}
+            onClick={() => setStage2Confirmed(true)}
+          >
+            <BadgeCheck size={16} /> Confirm scope · Continue to design
+          </button>
+        </div>
       </section>
+      )}
 
       {/* ============================================================
-         Phase 2 — Design
-         Gated: only appears once Phase 1 produced extracted resources.
+         Stage 3 — Design parameters
+         Gated: only appears once Stage 2's scope is confirmed.
          ============================================================ */}
-      {items.length > 0 && (
+      {stage1Confirmed && stage2Confirmed && (
       <section className="card">
         <div className="section-head">
-          <span className="phase-icon" aria-hidden>
+          <span className="stage-icon" aria-hidden>
             <Settings2 size={18} strokeWidth={2.2} />
           </span>
-          <span className="phase-title">
-            <span className="phase-label">Phase 2</span>
+          <span className="stage-title">
+            <span className="stage-label">Stage 3</span>
             <h2>Design parameters</h2>
           </span>
         </div>
 
-        <div className="row cols-4">
-          <div className="field">
-            <label className="field-label" htmlFor="appName">
-              Application name
-              <Tooltip
-                label="Application name"
-                content="Tagged into the Custom name column of every line in the Excel export."
-              />
-            </label>
-            <input id="appName" type="text" value={appName} onChange={(e) => setAppName(e.target.value)} placeholder="e.g. ERPSuite" />
-          </div>
+        <div className="row cols-3">
           <div className="field">
             <label className="field-label" htmlFor="region">
               Primary region
@@ -737,7 +848,7 @@ export default function AssessmentApp({ user }: { user: string }) {
           </div>
         </div>
 
-        {/* Phase 2 CTA — advances the flow to Phase 3. */}
+        {/* Stage 3 CTA — runs pricing and reveals Stage 4. */}
         <div style={{ marginTop: "1.25rem" }}>
           <button
             className="primary"
@@ -748,7 +859,7 @@ export default function AssessmentApp({ user }: { user: string }) {
             {stage === "pricing" ? (
               <><Loader2 size={16} className="spin" /> {loadingLabel(stage)}</>
             ) : (
-              <><Calculator size={16} /> Generate estimate</>
+              <><Calculator size={16} /> {lines.length > 0 ? "Re-generate estimate" : "Generate estimate"}</>
             )}
           </button>
         </div>
@@ -756,16 +867,16 @@ export default function AssessmentApp({ user }: { user: string }) {
       )}
 
       {/* ============================================================
-         Phase 3 — Estimate
+         Stage 4 — Cost estimate
          ============================================================ */}
       {lines.length > 0 && (
         <section className="card" style={{ marginTop: "1.5rem" }}>
           <div className="section-head">
-            <span className="phase-icon" aria-hidden>
-              <Receipt size={18} strokeWidth={2.2} />
+            <span className="stage-icon" aria-hidden>
+              <Calculator size={18} strokeWidth={2.2} />
             </span>
-            <span className="phase-title">
-              <span className="phase-label">Phase 3</span>
+            <span className="stage-title">
+              <span className="stage-label">Stage 4</span>
               <h2>Cost estimate</h2>
             </span>
           </div>
