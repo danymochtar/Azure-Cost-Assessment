@@ -612,6 +612,21 @@ details.notice-pill-expandable > p {
   white-space: pre-wrap;
 }
 
+/* Source VM / workload names rendered under a grouped BOM line so the
+ * "D8s v5 ×8" line surfaces its eight hostnames. Faint, truncated;
+ * full list available via the title attribute. */
+.workload-names {
+  margin-top: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--text-muted, #64748b);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
 /* Landing Zone customize checklist — appears under the tier picker
  * when the user opts to customise. Grouped by category, each row a
  * checkbox + bold label + faint description. */

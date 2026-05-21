@@ -63,15 +63,26 @@ export async function buildLiftShiftBom(
   const cli = client ?? new RetailPricesClient();
   const lines: BomLine[] = [];
 
-  // Group VMs by (SKU recommendation, OS, env, billing, AHB)
+  // Group VMs by (SKU recommendation, OS, env, billing, AHB). Each group
+  // also collects the source VM names so the resulting BOM line can be
+  // traced back to "which hostname(s) ended up in this bucket".
   const groups = new Map<
     string,
-    { meta: VmGroupKey; count: number; sample: InventoryItem; vcpu: number; memoryGb: number }
+    {
+      meta: VmGroupKey;
+      count: number;
+      sample: InventoryItem;
+      vcpu: number;
+      memoryGb: number;
+      names: string[];
+      haNames: string[];
+    }
   >();
   // Each HA-flagged VM expands to 2 instances at compute time so the
   // BOM reflects the active/standby (or active/active) pair the AI
   // detected. Disks stay 1:1 — the replica is the same logical disk.
   let haPairCount = 0;
+  const haNamesAll: string[] = [];
   for (const item of items) {
     const sku = recommendVm(item, opts.headroom, 2, opts.computeMode);
     const billing = billingForVm(item, opts.pricingMode, opts.nonProdPayg);
@@ -86,12 +97,21 @@ export async function buildLiftShiftBom(
     };
     const k = groupKey(meta);
     const haUnits = item.hasHa ? 2 : 1;
-    if (item.hasHa) haPairCount += 1;
+    if (item.hasHa) {
+      haPairCount += 1;
+      haNamesAll.push(item.name);
+    }
     const existing = groups.get(k);
     if (existing) {
       existing.count += haUnits;
+      existing.names.push(item.name);
+      if (item.hasHa) existing.haNames.push(item.name);
     } else {
-      groups.set(k, { meta, count: haUnits, sample: item, vcpu: sku.vcpu, memoryGb: sku.memoryGb });
+      groups.set(k, {
+        meta, count: haUnits, sample: item, vcpu: sku.vcpu, memoryGb: sku.memoryGb,
+        names: [item.name],
+        haNames: item.hasHa ? [item.name] : [],
+      });
     }
   }
 
@@ -136,6 +156,12 @@ export async function buildLiftShiftBom(
       customName: opts.appName ? `${opts.appName}-${g.meta.display}` : g.meta.display,
       resourceCount: g.count,
       billingTerm: effectiveLabel,
+      // Carry the source VM names so the user can map this grouped
+      // line back to the original inventory ("which 8 hosts is the
+      // D8s v5 ×8 line?"). HA-flagged names are noted explicitly.
+      workloadNames: g.haNames.length > 0
+        ? [...g.names.filter((n) => !g.haNames.includes(n)), ...g.haNames.map((n) => `${n} (HA pair)`)]
+        : g.names,
       assumption: rec
         ? `${g.count} x ${perHour.toFixed(4)}/hr x 730 hrs = ${groupMonthly.toFixed(2)}` +
           (g.meta.ahb ? " (AHB: priced as Linux)" : "") +
@@ -185,6 +211,7 @@ export async function buildLiftShiftBom(
         customName: opts.appName ? `${opts.appName}-${item.name}` : item.name,
         resourceCount: 1,
         billingTerm: "PAYG",
+        workloadNames: [item.name],
         assumption: `${d.sizeGb.toFixed(0)} GB → ${rec.sku} (${rec.sizeGib} GiB) ${effTier}`,
       });
     }
@@ -215,6 +242,7 @@ export async function buildLiftShiftBom(
       customName: opts.appName ? `${opts.appName}-lb` : "Load Balancer",
       resourceCount: 1,
       billingTerm: "PAYG",
+      workloadNames: haNamesAll,
       assumption: `Standard LB ~$18.25/mo (5 rules) + ~$3.65/mo data processed (50 GB × $0.005/GB). Hosts the active/standby (or active/active) front-end for ${haPairCount} HA-flagged workload(s).`,
     });
   }

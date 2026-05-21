@@ -1690,7 +1690,14 @@ export default function AssessmentApp({ user }: { user: string }) {
                         <tbody>
                           {rows.map((l, i) => (
                             <tr key={i}>
-                              <td>{l.resource}</td>
+                              <td>
+                                {l.resource}
+                                {l.workloadNames && l.workloadNames.length > 0 && (
+                                  <div className="workload-names" title={l.workloadNames.join(", ")}>
+                                    {l.workloadNames.join(", ")}
+                                  </div>
+                                )}
+                              </td>
                               <td className="num">{l.resourceCount}</td>
                               <td>{l.billingTerm}</td>
                               <td className="num">${fmtMoney(l.monthlyCost)}</td>

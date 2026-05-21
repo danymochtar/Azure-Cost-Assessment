@@ -34,6 +34,7 @@ export function buildBcdrBom(items: InventoryItem[], opts: BcdrOptions): BomLine
   if (items.length === 0) return [];
 
   const vmCount = items.length;
+  const names = items.map((it) => it.name);
   const totalStorageGb = items.reduce((s, it) => {
     const fromDisks = it.disks.reduce((a, d) => a + (d.sizeGb || 0), 0);
     return s + (fromDisks > 0 ? fromDisks : it.storageGb || 0);
@@ -60,6 +61,7 @@ export function buildBcdrBom(items: InventoryItem[], opts: BcdrOptions): BomLine
     customName: opts.appName ? `${opts.appName}-asr` : "Site Recovery",
     resourceCount: vmCount,
     billingTerm: "PAYG",
+    workloadNames: names,
     assumption: `$${PROTECTED_INSTANCE_PER_MONTH.toFixed(2)}/VM/mo × ${vmCount} VMs (Azure-to-Azure). First 31 days free per instance — steady-state cost shown.`,
   });
 
@@ -83,6 +85,7 @@ export function buildBcdrBom(items: InventoryItem[], opts: BcdrOptions): BomLine
       customName: opts.appName ? `${opts.appName}-asr-disks` : "ASR replica disks",
       resourceCount: vmCount,
       billingTerm: "PAYG",
+    workloadNames: names,
       assumption: `${totalStorageGb.toFixed(0)} GB × $${REPLICA_DISK_USD_PER_GB_MONTH.toFixed(3)}/GB/mo (Standard SSD baseline). Premium SSD source disks would land closer to $0.135/GB.`,
     });
   }
@@ -106,6 +109,7 @@ export function buildBcdrBom(items: InventoryItem[], opts: BcdrOptions): BomLine
     customName: opts.appName ? `${opts.appName}-asr-cache` : "ASR cache",
     resourceCount: 1,
     billingTerm: "PAYG",
+    workloadNames: names,
     assumption: `~$${CACHE_STORAGE_PER_VM.toFixed(2)}/VM/mo for delta-replication staging (GPv2 SA). Spike higher under high churn (use Premium Block Blob).`,
   });
 

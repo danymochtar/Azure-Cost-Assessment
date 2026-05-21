@@ -89,4 +89,30 @@ describe("HA flag", () => {
     const { lines } = await buildLiftShiftBom([mkVm("solo", false)], baseOpts, cli);
     expect(lines.find((l) => l.resource.startsWith("Standard Load Balancer"))).toBeUndefined();
   });
+
+  it("each VM compute line lists its source workload names", async () => {
+    const cli = new FakeRetail();
+    const { lines } = await buildLiftShiftBom(
+      [mkVm("erp-1", false), mkVm("erp-2", false), mkVm("hr-1", true)],
+      baseOpts, cli,
+    );
+    const vmLines = lines.filter((l) => l.category === "Virtual Machines");
+    const allNames = vmLines.flatMap((l) => l.workloadNames ?? []);
+    expect(allNames).toContain("erp-1");
+    expect(allNames).toContain("erp-2");
+    // HA-flagged VM names get the "(HA pair)" suffix.
+    expect(allNames.some((n) => n.startsWith("hr-1"))).toBe(true);
+  });
+
+  it("each disk line is tagged with the owning VM name", async () => {
+    const cli = new FakeRetail();
+    const { lines } = await buildLiftShiftBom(
+      [mkVm("sql-prim", false), mkVm("web-1", false)],
+      baseOpts, cli,
+    );
+    const diskLines = lines.filter((l) => l.category === "Managed Disks");
+    const owners = new Set(diskLines.flatMap((l) => l.workloadNames ?? []));
+    expect(owners.has("sql-prim")).toBe(true);
+    expect(owners.has("web-1")).toBe(true);
+  });
 });
