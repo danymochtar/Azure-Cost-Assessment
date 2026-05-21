@@ -240,6 +240,31 @@ export default function AssessmentApp({ user }: { user: string }) {
   }, []);
   const removeFile = (i: number) => setFiles((curr) => curr.filter((_, idx) => idx !== i));
 
+  // Editable inventory helpers — wired into the Stage 2 table.
+  const updateItem = useCallback((idx: number, partial: Partial<InventoryItem>) => {
+    setItems((curr) => curr.map((it, i) => (i === idx ? { ...it, ...partial } : it)));
+  }, []);
+  const deleteItem = useCallback((idx: number) => {
+    setItems((curr) => curr.filter((_, i) => i !== idx));
+  }, []);
+  const addBlankItem = useCallback(() => {
+    setItems((curr) => [
+      ...curr,
+      {
+        name: "New server",
+        vcpu: 2,
+        memoryGb: 4,
+        storageGb: 64,
+        os: "Linux",
+        environment: "prod",
+        powerstate: "poweredOn",
+        notes: "Manually added",
+        disks: [],
+        hasDb: false,
+      },
+    ]);
+  }, []);
+
   // If the user clears every file + paste content after having already
   // analyzed, snap the whole page back to a clean Stage 1 — Stage 2/3/4
   // should not linger with stale classification or BOM data.
@@ -720,8 +745,10 @@ export default function AssessmentApp({ user }: { user: string }) {
         )}
 
         {/* Extracted resources fold into Stage 2 so the user can sanity-
-            check the inventory before moving to Design parameters. */}
-        {items.length > 0 && (
+            check the inventory before moving to Design parameters.
+            Every field is editable — fix bad extractions, add VMs the AI
+            missed, flag database servers explicitly. */}
+        {(items.length > 0 || stage1Confirmed) && (
           <div style={{ marginTop: "1.25rem" }}>
             <h3 style={{ marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
               Extracted resources
@@ -729,45 +756,151 @@ export default function AssessmentApp({ user }: { user: string }) {
                 <Server size={12} /> {items.length} virtual machines
               </span>
             </h3>
+            <p className="helper" style={{ marginTop: "-0.25rem", marginBottom: "0.5rem" }}>
+              Click any cell to edit. Use the DB checkbox for database servers — that pins disk routing to Premium SSD and (when ported) drives SQL Server licensing.
+            </p>
             <div className="table-wrap scroll-y">
-              <table>
+              <table className="inv-table">
                 <thead>
                   <tr>
                     <th>Name</th>
-                    <th className="num">vCPU</th>
+                    <th className="num">
+                      vCPU
+                      <Tooltip
+                        label="vCPU vs core"
+                        content="Azure provisions in vCPUs. 1 vCPU = 1 logical CPU (thread). If your inventory lists physical cores, multiply by 2 when hyperthreading is on. For Azure SQL DB, vCores map 1:1 to logical CPUs."
+                      />
+                    </th>
                     <th className="num">Memory (GB)</th>
                     <th className="num">Storage (GB)</th>
                     <th>OS</th>
                     <th>Env</th>
+                    <th>
+                      DB
+                      <Tooltip
+                        label="Database flag"
+                        content="Tick if this server runs a database (SQL Server, Postgres, MySQL, Oracle, Mongo, etc.). Forces Premium SSD for the disks and signals SQL Server licensing for future pricing passes."
+                      />
+                    </th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((it) => (
-                    <tr key={it.name}>
-                      <td><code>{it.name}</code></td>
-                      <td className="num">{it.vcpu}</td>
-                      <td className="num">{it.memoryGb.toFixed(1)}</td>
-                      <td className="num">{it.storageGb.toFixed(0)}</td>
-                      <td>{it.os}</td>
-                      <td>{it.environment}</td>
+                  {items.map((it, idx) => (
+                    <tr key={idx}>
+                      <td>
+                        <input
+                          type="text"
+                          className="inv-input inv-name"
+                          value={it.name}
+                          onChange={(e) => updateItem(idx, { name: e.target.value })}
+                          placeholder="Server name"
+                        />
+                      </td>
+                      <td className="num">
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="inv-input inv-num"
+                          value={it.vcpu}
+                          onChange={(e) => updateItem(idx, { vcpu: Math.max(0, Number(e.target.value) | 0) })}
+                        />
+                      </td>
+                      <td className="num">
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.5}
+                          className="inv-input inv-num"
+                          value={it.memoryGb}
+                          onChange={(e) => updateItem(idx, { memoryGb: Math.max(0, Number(e.target.value)) })}
+                        />
+                      </td>
+                      <td className="num">
+                        <input
+                          type="number"
+                          min={0}
+                          step={10}
+                          className="inv-input inv-num"
+                          value={it.storageGb}
+                          onChange={(e) => updateItem(idx, { storageGb: Math.max(0, Number(e.target.value)), disks: [] })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          className="inv-input inv-os"
+                          value={it.os}
+                          onChange={(e) => updateItem(idx, { os: e.target.value })}
+                          placeholder="Linux / Windows"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          className="inv-input inv-env"
+                          value={it.environment}
+                          onChange={(e) => updateItem(idx, { environment: e.target.value })}
+                          placeholder="prod / uat / dev"
+                        />
+                      </td>
+                      <td className="cell-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={!!it.hasDb}
+                          onChange={(e) => updateItem(idx, { hasDb: e.target.checked })}
+                          aria-label="Database server"
+                        />
+                      </td>
+                      <td className="cell-remove">
+                        <button
+                          className="danger-ghost"
+                          onClick={() => deleteItem(idx)}
+                          aria-label={`Remove ${it.name}`}
+                          title="Remove"
+                        >
+                          <X size={14} />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            <button
+              onClick={addBlankItem}
+              style={{ marginTop: "0.6rem" }}
+              type="button"
+            >
+              + Add server
+            </button>
           </div>
         )}
 
-        {/* Stage 2 CTA — advances the flow to Stage 3. */}
+        {/* Stage 2 CTA — advances the flow to Stage 3.
+            Gated on at least one valid VM AND at least one pillar in scope.
+            Editing the inventory after confirm doesn't auto-unconfirm
+            (otherwise small tweaks to RAM would hide Stage 3); the user
+            re-clicks confirm if they want fresh propagation. */}
         <div style={{ marginTop: "1.25rem" }}>
           <button
             className="primary"
             style={{ width: "100%" }}
-            disabled={activePillars.size === 0}
+            disabled={
+              activePillars.size === 0 ||
+              (items.length > 0 && items.every((i) => i.vcpu === 0 && i.memoryGb === 0))
+            }
             onClick={() => setStage2Confirmed(true)}
           >
-            <BadgeCheck size={16} /> Confirm scope · Continue to design
+            <BadgeCheck size={16} />{" "}
+            {stage2Confirmed ? "Confirmed — scroll to design ▾" : "Confirm scope · Continue to design"}
           </button>
+          {items.length > 0 && items.every((i) => i.vcpu === 0 && i.memoryGb === 0) && (
+            <p className="helper" style={{ color: "var(--danger)", marginTop: "0.4rem" }}>
+              Every VM has 0 vCPU and 0 GB memory. Fix the inventory above before continuing — Stage 3 won&apos;t produce a meaningful estimate.
+            </p>
+          )}
         </div>
       </section>
       )}

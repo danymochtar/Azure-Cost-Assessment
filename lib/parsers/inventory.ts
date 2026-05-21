@@ -156,6 +156,14 @@ function incompleteReason(items: InventoryItem[]): string {
   return `${broken} of ${items.length} extracted items have vcpu=0 and memory_gb=0`;
 }
 
+const DB_HINT_RE = /\b(sql|mssql|postgres|mysql|mariadb|oracle|mongo|cassandra|hana|cockroach|db2|sybase|redis)\b/i;
+
+function detectDb(workload: string | undefined, name: string, notes: string): boolean {
+  if (workload === "sql" || workload === "db") return true;
+  const hay = `${name} ${notes}`;
+  return DB_HINT_RE.test(hay);
+}
+
 function mapItems(parsed: z.infer<typeof ExtractionSchema>): InventoryItem[] {
   return parsed.items.map((i) => {
     const disks: DiskItem[] = i.disks.map((d) => ({
@@ -175,6 +183,7 @@ function mapItems(parsed: z.infer<typeof ExtractionSchema>): InventoryItem[] {
       disks,
       workload: i.workload,
       recommendedAzureService: i.recommended_azure_service,
+      hasDb: detectDb(i.workload, i.name, i.notes),
     };
   });
 }

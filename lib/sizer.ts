@@ -145,6 +145,10 @@ export function recommendDisk(sizeGb: number, tier = "Premium SSD"): DiskRec {
 }
 
 export function recommendDiskTier(item: InventoryItem, fallback = "Standard SSD"): string {
+  // Explicit user-flag wins — when the operator ticks the DB checkbox
+  // in the Stage 2 inventory table, we know for sure this is a DB workload.
+  if (item.hasDb) return "Premium SSD";
+
   const haystack = [
     (item.name ?? "").toLowerCase(),
     (item.os ?? "").toLowerCase(),

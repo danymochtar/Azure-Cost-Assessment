@@ -987,6 +987,72 @@ footer {
 .solution-area .pillar-row { padding: 0.3rem 0; }
 
 /* =============================================================================
+ * Editable inventory table (Stage 2)
+ * Every field is an input so the user can fix the AI's extraction inline.
+ * ============================================================================= */
+.inv-table th {
+  white-space: nowrap;
+}
+.inv-table th .tooltip-anchor {
+  margin-left: 0.2rem;
+  vertical-align: middle;
+}
+.inv-table td {
+  padding: 0.35rem 0.45rem;
+  vertical-align: middle;
+}
+.inv-input {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  width: 100%;
+  min-width: 0;
+  font-family: var(--font-sans);
+}
+.inv-input:hover { border-color: var(--accent); }
+.inv-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-ring);
+  background: var(--surface-2);
+}
+.inv-input.inv-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-family: var(--font-mono);
+  max-width: 90px;
+}
+.inv-input.inv-name {
+  font-family: var(--font-mono);
+  min-width: 200px;
+}
+.inv-input.inv-os { min-width: 130px; }
+.inv-input.inv-env { min-width: 100px; max-width: 130px; }
+
+.inv-table td.cell-checkbox {
+  text-align: center;
+  width: 48px;
+}
+.inv-table td.cell-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.inv-table td.cell-remove {
+  width: 36px;
+  text-align: center;
+}
+.inv-table td.cell-remove button {
+  min-height: 32px;
+  padding: 0.3rem 0.5rem;
+}
+
+/* =============================================================================
  * Scope note — Phase 3 banner that lists the active pillars + flags
  * the ones that are scoped but not yet priced.
  * ============================================================================= */

@@ -20,6 +20,11 @@ export interface InventoryItem {
   disks: DiskItem[];
   workload?: string;
   recommendedAzureService?: string;
+  /** True when the server runs a database (SQL Server, Postgres, etc.).
+   *  Drives disk-tier auto-routing (Premium SSD) and future SQL Server
+   *  licensing decisions. Pre-filled from the AI's workload hint and
+   *  user-editable via the inventory table checkbox in Stage 2. */
+  hasDb?: boolean;
 }
 
 export interface BomLine {

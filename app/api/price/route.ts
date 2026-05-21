@@ -25,6 +25,7 @@ const ItemSchema = z.object({
   disks: z.array(DiskSchema).default([]),
   workload: z.string().optional(),
   recommendedAzureService: z.string().optional(),
+  hasDb: z.boolean().optional(),
 });
 
 const OptionsSchema = z.object({

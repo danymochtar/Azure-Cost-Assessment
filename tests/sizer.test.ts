@@ -120,4 +120,16 @@ describe("recommendDiskTier", () => {
   it("falls back to default for generic VMs", () => {
     expect(recommendDiskTier(vm({ name: "vm-001" }))).toBe("Standard SSD");
   });
+
+  it("user-flagged DB rows route to Premium SSD even when the name doesn't say so", () => {
+    // The Stage 2 inventory checkbox sets hasDb=true. That should win
+    // over name-based detection (which would otherwise miss "erp-app-01").
+    expect(recommendDiskTier(vm({ name: "erp-app-01", hasDb: true }))).toBe("Premium SSD");
+  });
+
+  it("hasDb=true overrides an HDD-leaning name", () => {
+    // Edge case: a VM named "logserver-01" that ALSO runs a database.
+    // User flag wins over the HDD token hint.
+    expect(recommendDiskTier(vm({ name: "logserver-01", hasDb: true }))).toBe("Premium SSD");
+  });
 });
