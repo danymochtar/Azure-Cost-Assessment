@@ -493,16 +493,16 @@ export default function AssessmentApp({ user }: { user: string }) {
           </div>
           <div className="field">
             <label className="field-label" htmlFor="compute">
-              Compute mode
+              Optimization profile
               <Tooltip
-                label="Compute mode"
-                content="Saving = Burstable / Basic (~30-60% cheaper, non-prod only). Normal = production-grade D-series. High Performance = E/F-series for memory- or compute-bound workloads."
+                label="Optimization profile"
+                content="Steers AI tier and SKU recommendations across every service — VMs, App Service, SQL, Cosmos, AI models, Redis. Cost-saving picks the cheapest viable tier (Burstable / Basic / Serverless where supported). Balanced is the production-grade default. Performance picks premium, memory-optimised, or GPU-ready tiers."
               />
             </label>
             <select id="compute" value={computeMode} onChange={(e) => setComputeMode(e.target.value as ComputeMode)}>
-              <option value="saving">Saving — Burstable / Basic</option>
-              <option value="normal">Normal — D-series (default)</option>
-              <option value="high_perf">High Performance — E / F-series</option>
+              <option value="saving">Cost-saving</option>
+              <option value="normal">Balanced (recommended)</option>
+              <option value="high_perf">Performance</option>
             </select>
           </div>
           <div className="field">
