@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Azure Cost Assessment",
     short_name: "AzCost",
-    description: "Upload anything. Get a live-priced Azure BOM.",
+    description: "Upload your workload. Pick your Azure design. Get a live cost estimate.",
     start_url: "/",
     scope: "/",
     display: "standalone",

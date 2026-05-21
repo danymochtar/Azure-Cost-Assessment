@@ -11,7 +11,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Azure Cost Assessment",
   description:
-    "Upload anything — VM inventory, design doc, AI use-case — and get a live-priced Azure BOM.",
+    "Upload your workload, pick your Azure design, and get a live cost estimate.",
   applicationName: "Azure Cost Assessment",
   manifest: "/manifest.webmanifest",
   appleWebApp: {

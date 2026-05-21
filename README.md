@@ -26,7 +26,7 @@ Built with **Next.js 15 (App Router) + TypeScript** and deployable to **Vercel**
 | Live Azure Retail Prices API with regional + term fallback | ✅ |
 | Billing terms: PAYG / SP 1Y / SP 3Y / RI 1Y / RI 3Y (with per-line fallback labeling) | ✅ |
 | Compute modes: Saving / Normal / High-Performance | ✅ |
-| Excel export (Pricing Calculator template) + JSON export | ✅ |
+| Excel export (Pricing Calculator template — full per-line + assumptions) | ✅ |
 | Multi-file classification with aggregation across uploads | ✅ |
 | Vitest suite for picker / bandwidth / sizer (28 tests) | ✅ |
 | Zod request validation at /api/price and /api/export | ✅ |
@@ -204,7 +204,8 @@ lib/
     lift-shift.ts               ← VM compute (grouped) + managed disks BOM + per-line fallback labeling
   output/
     excel.ts                    ← Estimate + Cost Assumptions sheets (exceljs, server-side)
-    pricing-calc.ts             ← Pricing Calculator import JSON
+components/
+  Tooltip.tsx                   ← Click/tap-to-toggle help popover (touch-friendly, iPhone-tested)
 tests/
   picker.test.ts, bandwidth.test.ts, sizer.test.ts   ← 28 vitest assertions
 ```

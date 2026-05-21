@@ -706,6 +706,179 @@ footer {
 .kbd-stack > * + * { margin-top: 0.6rem; }
 
 /* =============================================================================
+ * Phase header — replaces the plain numbered circle with a lucide icon tile
+ * ============================================================================= */
+.section-head .phase-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.section-head .phase-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: 0.1rem;
+}
+.section-head .phase-title {
+  display: flex;
+  flex-direction: column;
+}
+
+/* =============================================================================
+ * Tooltip — click/tap to toggle, dismissable, iPhone-friendly
+ * ============================================================================= */
+.tooltip-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  border-radius: 50%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-left: 0.25rem;
+  transition: color 120ms, background-color 120ms;
+}
+.help-icon:hover,
+.help-icon:focus-visible {
+  color: var(--accent);
+  background: var(--accent-soft);
+  outline: none;
+}
+.tooltip-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: max-content;
+  max-width: min(280px, calc(100vw - 2rem));
+  padding: 0.6rem 0.75rem;
+  background: var(--text);
+  color: var(--surface);
+  border-radius: var(--radius);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-transform: none;
+  box-shadow: var(--shadow-lg);
+  pointer-events: auto;
+  white-space: normal;
+  text-align: left;
+}
+.tooltip-popover::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 10px;
+  height: 10px;
+  background: var(--text);
+}
+/* On narrow phones, anchor to the left edge so popovers don't clip offscreen */
+@media (max-width: 480px) {
+  .tooltip-popover {
+    left: 0;
+    transform: none;
+    max-width: calc(100vw - 3rem);
+  }
+  .tooltip-popover::before {
+    left: 10px;
+    transform: rotate(45deg);
+  }
+}
+
+/* =============================================================================
+ * Category groups (Phase 3 estimate breakdown)
+ * ============================================================================= */
+.category-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin-bottom: 0.6rem;
+  overflow: hidden;
+}
+.category-group > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  font-size: 0.92rem;
+  background: var(--surface-2);
+  transition: background-color 120ms;
+}
+.category-group > summary::-webkit-details-marker { display: none; }
+.category-group > summary::before {
+  content: "▸";
+  display: inline-block;
+  color: var(--text-muted);
+  transition: transform 120ms;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.category-group[open] > summary::before { transform: rotate(90deg); }
+.category-group > summary:hover { background: var(--accent-soft); }
+.category-group .cat-name {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.category-group .cat-count {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.category-group .cat-subtotal {
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.category-group .group-body {
+  border-top: 1px solid var(--border);
+}
+.category-group .group-body table {
+  font-size: 0.85rem;
+  min-width: 0;
+}
+.category-group .group-body th {
+  background: var(--surface);
+  font-size: 0.7rem;
+}
+.category-group .group-body td:first-child {
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* =============================================================================
  * Login layout
  * ============================================================================= */
 .login-shell {
