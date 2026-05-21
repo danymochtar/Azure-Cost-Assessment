@@ -1,9 +1,28 @@
 import { NextResponse } from "next/server";
 import { extractInventory } from "@/lib/parsers/inventory";
-import type { InventoryItem } from "@/lib/models";
+import type { InventoryItem, Notice } from "@/lib/models";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
+
+// Trim an AI-generated summary to a short headline (first sentence, no
+// trailing prose). Keeps the per-file warning banner scannable while the
+// full text stays available as `detail` for the curious / debugging.
+function shortHeadline(text: string, max = 140): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (cleaned.length <= max) return cleaned;
+  const sentenceEnd = cleaned.search(/[.!?]\s/);
+  if (sentenceEnd > 0 && sentenceEnd < max) return cleaned.slice(0, sentenceEnd + 1);
+  return `${cleaned.slice(0, max - 1).trimEnd()}…`;
+}
+
+function modelShort(m?: string): string | undefined {
+  if (!m) return undefined;
+  if (m.includes("haiku")) return "Haiku";
+  if (m.includes("sonnet")) return "Sonnet";
+  if (m.includes("opus")) return "Opus";
+  return m;
+}
 
 export async function POST(req: Request) {
   try {
@@ -20,7 +39,7 @@ export async function POST(req: Request) {
 
     const seen = new Set<string>();
     const merged: InventoryItem[] = [];
-    const warnings: string[] = [];
+    const notices: Notice[] = [];
 
     const results = await Promise.allSettled(
       blobs.map(async (f) => ({ name: f.name, r: await extractInventory(f.data, f.name) })),
@@ -31,7 +50,11 @@ export async function POST(req: Request) {
       const name = blobs[i].name;
       if (result.status === "rejected") {
         const err = result.reason as Error;
-        warnings.push(`${name}: extraction failed — ${err.name}: ${err.message}`);
+        notices.push({
+          severity: "error",
+          source: name,
+          title: `Extraction failed: ${err.message}`,
+        });
         continue;
       }
       const r = result.value.r;
@@ -41,21 +64,54 @@ export async function POST(req: Request) {
         if (k) seen.add(k);
         merged.push(it);
       }
-      if (r.summary) warnings.push(`${name}: ${r.summary}`);
-      // Surface model escalation so the user sees Haiku → Sonnet → Opus path
-      const modelShort = (m?: string) =>
-        m?.includes("haiku") ? "Haiku" : m?.includes("sonnet") ? "Sonnet" : m?.includes("opus") ? "Opus" : m;
-      if (r.modelUsed && r.modelUsed !== "claude-haiku-4-5") {
-        warnings.push(
-          `${name}: escalated to ${modelShort(r.modelUsed)} after weaker model(s) returned incomplete data.`,
-        );
-      }
+
+      // Full failure across the cascade is the only thing the user MUST
+      // act on — flag it as an error so it surfaces above the fold.
       if (r.mode === "failed") {
-        warnings.push(`${name}: extraction failed across Haiku → Sonnet → Opus — re-share the file with cell values populated.`);
+        notices.push({
+          severity: "error",
+          source: name,
+          title: "Extractor returned no usable result — re-share with cell values populated.",
+          detail: r.summary || undefined,
+        });
+        continue;
+      }
+
+      // Quality miss: items came back but most have zero specs. Still
+      // worth surfacing prominently because pricing will be wrong.
+      const broken = r.items.filter((it) => it.vcpu === 0 && it.memoryGb === 0).length;
+      const brokenRatio = r.items.length === 0 ? 0 : broken / r.items.length;
+      if (brokenRatio >= 0.5 && r.items.length > 0) {
+        notices.push({
+          severity: "warning",
+          source: name,
+          title: `${broken} of ${r.items.length} extracted items are missing vCPU/memory — pricing will be inaccurate.`,
+          detail: r.summary || undefined,
+        });
+      } else if (r.summary) {
+        // Healthy extraction: keep the AI's summary as an info pill with
+        // a short headline; the full text lives in `detail`.
+        notices.push({
+          severity: "info",
+          source: name,
+          title: shortHeadline(r.summary),
+          detail: r.summary.length > 140 ? r.summary : undefined,
+        });
+      }
+
+      // Model escalation is purely informational — it tells the user the
+      // cascade kicked in, but the result is fine.
+      const mShort = modelShort(r.modelUsed);
+      if (mShort && r.modelUsed !== "claude-haiku-4-5") {
+        notices.push({
+          severity: "info",
+          source: name,
+          title: `Escalated to ${mShort}.`,
+        });
       }
     }
 
-    return NextResponse.json({ items: merged, warnings });
+    return NextResponse.json({ items: merged, notices });
   } catch (e) {
     const err = e as Error;
     return NextResponse.json({ error: `${err.name}: ${err.message}` }, { status: 500 });

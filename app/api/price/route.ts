@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { buildLiftShiftBom, type LiftShiftOptions } from "@/lib/pillars/lift-shift";
 import { buildLandingZoneBom, type LandingZoneTier } from "@/lib/pillars/landing-zone";
-import type { InventoryItem } from "@/lib/models";
+import type { InventoryItem, Notice } from "@/lib/models";
 import { RetailPricesClient } from "@/lib/pricing/retail";
 
 export const runtime = "nodejs";
@@ -64,21 +64,27 @@ export async function POST(req: Request) {
     );
     const lines = [...lzLines, ...workloadLines];
 
-    const warnings: string[] = [];
+    const notices: Notice[] = [];
     if (client.fallbacksUsed.size > 0) {
-      warnings.push(
-        `Regional pricing fallbacks used: ${[...client.fallbacksUsed].join(", ")}. ` +
-          "Deploy region remains your primary selection; only the pricing lookup was redirected.",
-      );
+      notices.push({
+        severity: "info",
+        title: `Regional pricing fallback used (${[...client.fallbacksUsed].join(", ")}).`,
+        detail:
+          "Deploy region remains your primary selection; only the pricing lookup was redirected to a nearby region where Microsoft publishes the meter.",
+      });
     }
     if (client.termFallbacks.size > 0) {
-      warnings.push(
-        `${client.termFallbacks.size} SKU(s) have no RI/SP meter in this region — affected lines are tagged "PAYG (... unavailable)" in the Billing column.`,
-      );
+      notices.push({
+        severity: "info",
+        title: `${client.termFallbacks.size} SKU(s) have no RI/SP meter here — billed at PAYG.`,
+        detail: `Affected lines are tagged "PAYG (... unavailable)" in the Billing column.`,
+      });
     }
-    if (client.lastError) warnings.push(client.lastError);
+    if (client.lastError) {
+      notices.push({ severity: "warning", title: client.lastError });
+    }
 
-    return NextResponse.json({ lines, warnings });
+    return NextResponse.json({ lines, notices });
   } catch (e) {
     if (e instanceof z.ZodError) {
       return NextResponse.json({ error: "Invalid request body", details: e.issues }, { status: 400 });

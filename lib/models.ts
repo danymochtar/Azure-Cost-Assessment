@@ -84,6 +84,18 @@ export type WorkloadType =
   | "mixed"
   | "unknown";
 
+/** UI-facing notice with severity so the page can size the banner to
+ *  match the message: errors need full attention, warnings are worth
+ *  reading, info is just an FYI (model escalation, region fallback).
+ *  `detail` is optional long-form text — UI keeps it collapsed by
+ *  default so the page doesn't get drowned in AI-generated prose. */
+export interface Notice {
+  severity: "error" | "warning" | "info";
+  source?: string;
+  title: string;
+  detail?: string;
+}
+
 export interface AssessmentProfile {
   workloadType: WorkloadType;
   confidence: number;

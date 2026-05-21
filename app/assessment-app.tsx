@@ -16,7 +16,7 @@ import {
   LANDING_ZONE_LABELS,
   type LandingZoneTier,
 } from "@/lib/pillars/landing-zone";
-import type { AssessmentProfile, BomLine, ComputeMode, InventoryItem, PricingMode } from "@/lib/models";
+import type { AssessmentProfile, BomLine, ComputeMode, InventoryItem, Notice, PricingMode } from "@/lib/models";
 
 const MAX_TOTAL_UPLOAD_MB = 4;
 
@@ -189,6 +189,42 @@ function sumMonthly(rows: BomLine[]): number {
   return rows.reduce((s, l) => s + l.monthlyCost, 0);
 }
 
+// Inline notice renderers — title is always visible; long detail text
+// hides behind a <details> so the banner stays one or two lines tall.
+function NoticeBody({ n }: { n: Notice }) {
+  return (
+    <span>
+      {n.source && <strong>{n.source}: </strong>}
+      {n.title}
+      {n.detail && (
+        <details className="notice-detail">
+          <summary>Show details</summary>
+          <p>{n.detail}</p>
+        </details>
+      )}
+    </span>
+  );
+}
+
+function NoticePill({ n }: { n: Notice }) {
+  // Single-line info chip; clicking expands the detail inline if any.
+  if (!n.detail) {
+    return (
+      <span className="notice-pill" title={n.source ? `${n.source}: ${n.title}` : n.title}>
+        {n.source ? `${n.source}: ` : ""}{n.title}
+      </span>
+    );
+  }
+  return (
+    <details className="notice-pill notice-pill-expandable">
+      <summary>
+        {n.source ? `${n.source}: ` : ""}{n.title}
+      </summary>
+      <p>{n.detail}</p>
+    </details>
+  );
+}
+
 function loadingLabel(stage: "idle" | "classifying" | "extracting" | "pricing"): string {
   if (stage === "classifying" || stage === "extracting") return "Analyzing workload…";
   if (stage === "pricing") return "Pricing meters…";
@@ -257,13 +293,13 @@ export default function AssessmentApp({ user }: { user: string }) {
   // Saved projects (Postgres-backed). Empty while DB is unavailable.
   interface SavedProject { id: string; customer: string; name: string; region: string; updatedAt: string }
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
-  const [savingProject, setSavingProject] = useState(false);
+  // Manual save state is gone — auto-save runs after every price.
   const [savedToast, setSavedToast] = useState("");
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [lines, setLines] = useState<BomLine[]>([]);
   const [stage, setStage] = useState<"idle" | "classifying" | "extracting" | "pricing">("idle");
   const [error, setError] = useState<string>("");
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const [notices, setNotices] = useState<Notice[]>([]);
 
   const totalBytes = useMemo(() => {
     let n = 0;
@@ -320,7 +356,7 @@ export default function AssessmentApp({ user }: { user: string }) {
       setItems([]);
       setLines([]);
       setError("");
-      setWarnings([]);
+      setNotices([]);
     }
   }, [files.length, pastedText, stage1Confirmed, stage2Confirmed, items.length, lines.length]);
 
@@ -387,7 +423,7 @@ export default function AssessmentApp({ user }: { user: string }) {
     setItems([]);
     setLines([]);
     setError("");
-    setWarnings([]);
+    setNotices([]);
   }
 
   async function signOut() {
@@ -426,53 +462,8 @@ export default function AssessmentApp({ user }: { user: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  async function saveCurrentProject() {
-    if (!customer.trim() || !appName.trim()) {
-      setError("Set both Customer and Project name in Stage 1 before saving.");
-      return;
-    }
-    setSavingProject(true);
-    setError("");
-    try {
-      const resp = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          customer: customer.trim(),
-          name: appName.trim(),
-          region,
-          pricingMode,
-          computeMode,
-          useAhbWindows,
-          nonProdPayg,
-          defaultDiskTier: diskTier,
-          autoDiskTier,
-          applyHeadroom,
-          headroom,
-          landingZoneTier,
-          activePillars: Array.from(activePillars),
-          items,
-          lines,
-        }),
-      });
-      if (!resp.ok) {
-        const data = (await resp.json().catch(() => ({}))) as { error?: string };
-        throw new Error(data.error || `Save failed (HTTP ${resp.status})`);
-      }
-      const data = (await resp.json()) as { project?: { customer?: string; name: string } };
-      const savedLabel = data.project?.customer
-        ? `${data.project.customer} · ${data.project.name}`
-        : data.project?.name ?? appName;
-      setSavedToast(`Saved "${savedLabel}"`);
-      await refreshProjects();
-      // Auto-clear toast after a few seconds
-      setTimeout(() => setSavedToast(""), 3500);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setSavingProject(false);
-    }
-  }
+  // saveCurrentProject() removed — autoSaveProject() (below) is the
+  // only path now, fired after each successful pricing run.
 
   async function loadProject(id: string) {
     setError("");
@@ -535,7 +526,7 @@ export default function AssessmentApp({ user }: { user: string }) {
       return;
     }
     setError("");
-    setWarnings([]);
+    setNotices([]);
     setProfile(null);
     setPerFile([]);
     setItems([]);
@@ -562,12 +553,15 @@ export default function AssessmentApp({ user }: { user: string }) {
         setStage("extracting");
         const eResp = await fetch("/api/extract", { method: "POST", body: fd2 });
         if (!eResp.ok) throw new Error(`Extract HTTP ${eResp.status}: ${await eResp.text()}`);
-        const eData = (await eResp.json()) as { items: InventoryItem[]; warnings: string[] };
+        const eData = (await eResp.json()) as { items: InventoryItem[]; notices?: Notice[] };
         setItems(eData.items);
-        if (eData.warnings?.length) setWarnings(eData.warnings);
+        if (eData.notices?.length) setNotices(eData.notices);
       } else if (!PORTED_PILLARS.has(data.profile.workloadType)) {
-        setWarnings([
-          `Detected "${PILLAR_LABELS[data.profile.workloadType] ?? data.profile.workloadType}". This pillar isn't priced yet in this build — see docs/PORTING-ROADMAP.md.`,
+        setNotices([
+          {
+            severity: "info",
+            title: `Detected "${PILLAR_LABELS[data.profile.workloadType] ?? data.profile.workloadType}" — pillar not yet priced in this build.`,
+          },
         ]);
       }
     } catch (e) {
@@ -599,13 +593,46 @@ export default function AssessmentApp({ user }: { user: string }) {
         }),
       });
       if (!resp.ok) throw new Error(`Estimate HTTP ${resp.status}: ${await resp.text()}`);
-      const data = (await resp.json()) as { lines: BomLine[]; warnings?: string[] };
+      const data = (await resp.json()) as { lines: BomLine[]; notices?: Notice[] };
       setLines(data.lines);
-      if (data.warnings?.length) setWarnings((w) => [...w, ...data.warnings!]);
+      if (data.notices?.length) setNotices((n) => [...n, ...data.notices!]);
+      // Auto-save: a fresh BOM is the natural checkpoint, and customer
+      // + name being mandatory means we always have a unique key to
+      // upsert against. Failures fall back to the toast — they don't
+      // surface as banners because the user didn't ask for a save.
+      if (data.lines.length > 0 && customer.trim() && appName.trim()) {
+        void autoSaveProject(data.lines);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setStage("idle");
+    }
+  }
+
+  async function autoSaveProject(linesOverride?: BomLine[]) {
+    if (!customer.trim() || !appName.trim()) return;
+    try {
+      const resp = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer: customer.trim(),
+          name: appName.trim(),
+          region, pricingMode, computeMode, useAhbWindows, nonProdPayg,
+          defaultDiskTier: diskTier, autoDiskTier,
+          applyHeadroom, headroom, landingZoneTier,
+          activePillars: Array.from(activePillars),
+          items,
+          lines: linesOverride ?? lines,
+        }),
+      });
+      if (!resp.ok) return; // silent — auto-save is best-effort
+      setSavedToast(`Auto-saved "${customer.trim()} · ${appName.trim()}"`);
+      await refreshProjects();
+      setTimeout(() => setSavedToast(""), 2500);
+    } catch {
+      /* silent */
     }
   }
 
@@ -721,12 +748,28 @@ export default function AssessmentApp({ user }: { user: string }) {
           <span>{error}</span>
         </div>
       )}
-      {warnings.map((w, i) => (
-        <div className="banner warning" key={i}>
-          <AlertTriangle size={16} className="icon" />
-          <span>{w}</span>
+      {/* Notices are split by severity so errors are loud, warnings are
+          legible and info is a single compact pill row — the page no
+          longer drowns in long AI-generated prose. */}
+      {notices.filter((n) => n.severity === "error").map((n, i) => (
+        <div className="banner error" key={`err-${i}`} role="alert">
+          <AlertCircle size={16} className="icon" />
+          <NoticeBody n={n} />
         </div>
       ))}
+      {notices.filter((n) => n.severity === "warning").map((n, i) => (
+        <div className="banner warning" key={`wrn-${i}`}>
+          <AlertTriangle size={16} className="icon" />
+          <NoticeBody n={n} />
+        </div>
+      ))}
+      {notices.filter((n) => n.severity === "info").length > 0 && (
+        <div className="notice-info-row" aria-label="Informational notes">
+          {notices.filter((n) => n.severity === "info").map((n, i) => (
+            <NoticePill key={`inf-${i}`} n={n} />
+          ))}
+        </div>
+      )}
 
       {/* ============================================================
          Stage 1 — Gather information
@@ -1389,13 +1432,13 @@ export default function AssessmentApp({ user }: { user: string }) {
             <button className="primary" onClick={() => void downloadExcel()}>
               <Download size={16} /> Download Excel (full breakdown)
             </button>
-            <button onClick={() => void saveCurrentProject()} disabled={savingProject || !customer.trim() || !appName.trim()}>
-              {savingProject ? (
-                <><Loader2 size={16} className="spin" /> Saving…</>
-              ) : (
-                <><Save size={16} /> Save assessment</>
-              )}
-            </button>
+            {/* Save button removed — every successful pricing run
+                auto-saves the project (see autoSaveProject). The toast
+                above the page surfaces the result; the /projects recap
+                lists every saved revision. */}
+            <span className="helper" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+              <Save size={14} /> Auto-saved as you go
+            </span>
           </div>
 
           <div className="kbd-stack">
