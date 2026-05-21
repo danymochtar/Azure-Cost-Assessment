@@ -182,6 +182,90 @@ export interface InventorySummary {
   sqlVmCount: number;
 }
 
+export interface LandingZoneRecommendation {
+  tier: LandingZoneTier;
+  reason: string;
+}
+
+/**
+ * Decide which Landing Zone tier the assessment should default to,
+ * based on the AI classifier's complexity verdict plus the extracted
+ * inventory shape. Implements the Microsoft CAF "right-size the hub"
+ * heuristic so the user lands on a sensible default at Stage 3 —
+ * they can still override.
+ *
+ * Two enterprise signals → Enterprise (full ALZ — DDoS, ExpressRoute,
+ * Firewall Premium, Sentinel/SOC). One signal or moderate footprint →
+ * Standard (production hub-spoke, the CAF default). Tiny footprint
+ * with no HA / BCDR / security pillar → Basic (Bastion + VPN + App GW
+ * + Defender Servers P1 only).
+ */
+export function recommendLandingZoneTier(input: {
+  complexity?: "simple" | "moderate" | "complex";
+  vmCount: number;
+  haVmCount: number;
+  sqlVmCount: number;
+  enableBcdr: boolean;
+  activePillars?: Iterable<string>;
+}): LandingZoneRecommendation {
+  const pillars = new Set(input.activePillars ?? []);
+
+  const enterpriseSignals: string[] = [];
+  if (input.complexity === "complex") {
+    enterpriseSignals.push("classifier flagged the workload as complex");
+  }
+  if (input.vmCount >= 25) {
+    enterpriseSignals.push(`${input.vmCount} VMs in scope (≥25 amortises Firewall Premium + DDoS)`);
+  }
+  if (input.enableBcdr) {
+    enterpriseSignals.push("BCDR with Site Recovery is enabled (multi-region landing)");
+  }
+  if (input.haVmCount >= 3) {
+    enterpriseSignals.push(`${input.haVmCount} HA-flagged workloads (mission-critical pattern)`);
+  }
+  if (input.sqlVmCount >= 3) {
+    enterpriseSignals.push(`${input.sqlVmCount} DB-hosting VMs (regulated data stack — Defender for SQL + ExpressRoute justified)`);
+  }
+  if (pillars.has("azure_security")) {
+    enterpriseSignals.push("Azure Security pillar in scope (full SOC = Sentinel + Defender CSPM)");
+  }
+  if (pillars.has("hybrid_multicloud")) {
+    enterpriseSignals.push("Hybrid Multicloud scope (Arc cross-cloud needs the full hub)");
+  }
+
+  if (enterpriseSignals.length >= 2) {
+    return {
+      tier: "enterprise",
+      reason: `Enterprise tier — ${enterpriseSignals.join("; ")}.`,
+    };
+  }
+
+  // Basic — tiny footprint, no HA, no regulated workloads.
+  const tinyFootprint =
+    input.vmCount > 0 &&
+    input.vmCount <= 5 &&
+    input.complexity !== "complex" &&
+    input.haVmCount === 0 &&
+    input.sqlVmCount === 0 &&
+    !input.enableBcdr &&
+    !pillars.has("azure_security") &&
+    !pillars.has("hybrid_multicloud");
+  if (tinyFootprint) {
+    return {
+      tier: "basic",
+      reason: `Basic tier — ${input.vmCount} VM${input.vmCount === 1 ? "" : "s"}, no HA / BCDR / regulated workloads, so the Public IP + VPN + App GW + Defender Servers P1 hub is enough.`,
+    };
+  }
+
+  // Standard — CAF default for production hub-spoke.
+  return {
+    tier: "standard",
+    reason: enterpriseSignals.length === 1
+      ? `Standard tier — one enterprise signal (${enterpriseSignals[0]}) but not enough to justify Firewall Premium + DDoS yet. Step up to Enterprise if a second signal lands.`
+      : "Standard tier — production hub-spoke default per CAF. Bastion Std + Firewall Std + Key Vault + Defender CSPM/Servers/Storage scaled to your inventory.",
+  };
+}
+
 export function summariseInventory(items: InventoryItem[]): InventorySummary {
   let vmCount = 0;
   let sqlVmCount = 0;

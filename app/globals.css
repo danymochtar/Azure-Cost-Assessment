@@ -343,6 +343,20 @@ textarea {
   margin-top: 0.35rem;
 }
 
+/* Underlined inline action that sits inside helper text (e.g. "Apply
+ * recommendation" beside the LZ tier picker). Cheaper than a full
+ * button — feels like a hyperlink rather than a CTA. */
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent, #2563eb);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.link-button:hover { text-decoration: none; }
+
 /* =============================================================================
  * Buttons
  * ============================================================================= */

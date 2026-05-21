@@ -5,6 +5,7 @@ import {
   LANDING_ZONE_LABELS,
   LZ_COMPONENTS,
   LZ_TIER_COMPONENTS,
+  recommendLandingZoneTier,
   summariseInventory,
   type LandingZoneTier,
 } from "@/lib/pillars/landing-zone";
@@ -222,6 +223,56 @@ describe("buildLandingZoneBom", () => {
       expect(sentinel!.monthlyCost).toBeCloseTo(100 * 4.6, 2);
       const la = lines.find((l) => l.resource.startsWith("Log Analytics"));
       expect(la!.monthlyCost).toBeCloseTo(100 * 2.3, 2);
+    });
+  });
+
+  describe("recommendLandingZoneTier — auto-default", () => {
+    it("small workload (≤5 VMs, no HA, no BCDR) → Basic", () => {
+      const r = recommendLandingZoneTier({
+        complexity: "simple", vmCount: 3, sqlVmCount: 0, haVmCount: 0, enableBcdr: false,
+      });
+      expect(r.tier).toBe("basic");
+      expect(r.reason).toMatch(/Basic tier/);
+    });
+
+    it("complex classifier verdict alone → Standard (1 signal)", () => {
+      const r = recommendLandingZoneTier({
+        complexity: "complex", vmCount: 8, sqlVmCount: 0, haVmCount: 0, enableBcdr: false,
+      });
+      expect(r.tier).toBe("standard");
+      expect(r.reason).toMatch(/Standard tier/);
+    });
+
+    it("complex + BCDR enabled → Enterprise (2 signals)", () => {
+      const r = recommendLandingZoneTier({
+        complexity: "complex", vmCount: 8, sqlVmCount: 0, haVmCount: 0, enableBcdr: true,
+      });
+      expect(r.tier).toBe("enterprise");
+      expect(r.reason).toMatch(/Enterprise tier/);
+    });
+
+    it("≥25 VMs alone → still Standard (1 signal); add HA pairs → Enterprise", () => {
+      expect(recommendLandingZoneTier({
+        complexity: "moderate", vmCount: 40, sqlVmCount: 0, haVmCount: 0, enableBcdr: false,
+      }).tier).toBe("standard");
+      expect(recommendLandingZoneTier({
+        complexity: "moderate", vmCount: 40, sqlVmCount: 0, haVmCount: 3, enableBcdr: false,
+      }).tier).toBe("enterprise");
+    });
+
+    it("Azure Security + Hybrid Multicloud scope → Enterprise", () => {
+      const r = recommendLandingZoneTier({
+        complexity: "moderate", vmCount: 10, sqlVmCount: 0, haVmCount: 0, enableBcdr: false,
+        activePillars: ["azure_security", "hybrid_multicloud"],
+      });
+      expect(r.tier).toBe("enterprise");
+    });
+
+    it("mid-size production workload defaults to Standard", () => {
+      const r = recommendLandingZoneTier({
+        complexity: "moderate", vmCount: 12, sqlVmCount: 1, haVmCount: 1, enableBcdr: false,
+      });
+      expect(r.tier).toBe("standard");
     });
   });
 });
