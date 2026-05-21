@@ -150,6 +150,9 @@ export default function ForgotForm() {
           <Link href="/login">Back to sign in</Link>
         </div>
       </div>
+      <p className="copyright-line">
+        © {new Date().getFullYear()} Dany Mochtar · Azure Solution Lead @ Noventiq Malaysia
+      </p>
     </div>
   );
 }

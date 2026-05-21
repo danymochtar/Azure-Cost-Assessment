@@ -357,6 +357,11 @@ export default function AssessmentApp({ user }: { user: string }) {
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   // Manual save state is gone — auto-save runs after every price.
   const [savedToast, setSavedToast] = useState("");
+  // ID of the project row the current session is bound to. Set on first
+  // auto-save (POST returns it) and on /projects → Open. Subsequent
+  // auto-saves PATCH this row instead of creating new ones, so re-pricing
+  // doesn't spam "Migration 2 / 3 / 4…" entries.
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [lines, setLines] = useState<BomLine[]>([]);
   const [stage, setStage] = useState<"idle" | "classifying" | "extracting" | "pricing">("idle");
@@ -491,6 +496,9 @@ export default function AssessmentApp({ user }: { user: string }) {
     setError("");
     setNotices([]);
     setAiUsage(emptyUsage());
+    setCurrentProjectId(null);
+    setCustomer("");
+    setAppName("");
   }
 
   async function signOut() {
@@ -545,6 +553,7 @@ export default function AssessmentApp({ user }: { user: string }) {
         activePillars: string[]; items: InventoryItem[]; lines: BomLine[];
       } };
       const p = data.project;
+      setCurrentProjectId(id);
       setCustomer(p.customer ?? "");
       setAppName(p.name);
       setRegion(p.region);
@@ -687,6 +696,7 @@ export default function AssessmentApp({ user }: { user: string }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          projectId: currentProjectId ?? undefined,
           customer: customer.trim(),
           name: appName.trim(),
           region, pricingMode, computeMode, useAhbWindows, nonProdPayg,
@@ -698,7 +708,16 @@ export default function AssessmentApp({ user }: { user: string }) {
         }),
       });
       if (!resp.ok) return; // silent — auto-save is best-effort
-      setSavedToast(`Auto-saved "${customer.trim()} · ${appName.trim()}"`);
+      const data = (await resp.json()) as { project?: { id: string; customer?: string; name: string } };
+      const savedId = data.project?.id;
+      const savedName = data.project?.name ?? appName.trim();
+      const savedCustomer = data.project?.customer ?? customer.trim();
+      if (savedId && savedId !== currentProjectId) setCurrentProjectId(savedId);
+      // If the server auto-suffixed (e.g. "Migration" → "Migration 2")
+      // reflect that back into the form so the next save stays on the
+      // same row.
+      if (savedName !== appName.trim()) setAppName(savedName);
+      setSavedToast(`Auto-saved "${savedCustomer} · ${savedName}"`);
       await refreshProjects();
       setTimeout(() => setSavedToast(""), 2500);
     } catch {
@@ -1565,6 +1584,8 @@ export default function AssessmentApp({ user }: { user: string }) {
           Azure Retail Prices API
         </a>{" "}
         · Powered by Claude
+        <br />
+        © {new Date().getFullYear()} Dany Mochtar · Azure Solution Lead @ Noventiq Malaysia
       </footer>
     </div>
   );
