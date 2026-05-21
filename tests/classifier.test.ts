@@ -41,6 +41,24 @@ describe("Extractor prompt — sizing + service rationale contract", () => {
     expect(INVENTORY_SOURCE).toMatch(/burstable/i);
   });
 
+  it("teaches the model how to convert SKU descriptions like 'Xeon Gold 6346' into core counts", () => {
+    // Specific patterns the user's ERPSvr-2024 spec sheet exhibits.
+    expect(INVENTORY_SOURCE).toMatch(/Gold 6346/);
+    expect(INVENTORY_SOURCE).toMatch(/2\s*[×x]\s*16/);
+    // SKU-to-core lookup table for Intel + AMD.
+    expect(INVENTORY_SOURCE).toMatch(/Platinum 8480/);
+    expect(INVENTORY_SOURCE).toMatch(/EPYC\b/);
+    // Per-socket convention reminder so "(16 Cores)" isn't read as
+    // 16 total when the prefix is "2 x".
+    expect(INVENTORY_SOURCE).toMatch(/PER-SOCKET|per[-\s]socket/i);
+  });
+
+  it("teaches multi-volume disk summing (C:/D:/E: pattern)", () => {
+    expect(INVENTORY_SOURCE).toMatch(/storage_gb/);
+    expect(INVENTORY_SOURCE).toMatch(/RAID/);
+    expect(INVENTORY_SOURCE).toMatch(/1\.9\s*TB/);
+  });
+
   it("mapItems copies the rationale fields through to InventoryItem", () => {
     expect(INVENTORY_SOURCE).toMatch(/sizingRationale:\s*i\.sizing_rationale/);
     expect(INVENTORY_SOURCE).toMatch(/serviceRationale:\s*i\.service_rationale/);

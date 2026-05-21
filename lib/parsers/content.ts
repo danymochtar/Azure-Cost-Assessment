@@ -183,16 +183,51 @@ function uniqueHeaders(raw: string[]): string[] {
   });
 }
 
+// ExcelJS surfaces formula cells as { formula, result }, hyperlinks as
+// { text, hyperlink }, dates as JS Date, etc. Normalise to the human-
+// visible value so the preview reads like the user's spreadsheet, not
+// like the ExcelJS object model.
+function normaliseCellValue(v: unknown): unknown {
+  if (v == null) return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    if ("result" in o && o.result != null) return o.result;       // formula
+    if ("text" in o && typeof o.text === "string") return o.text; // hyperlink / rich text
+    if ("richText" in o && Array.isArray(o.richText)) {
+      return (o.richText as Array<{ text?: string }>).map((rt) => rt.text ?? "").join("");
+    }
+  }
+  return v;
+}
+
 async function readWorkbook(data: Buffer, filename: string) {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(data as unknown as ArrayBuffer);
   const sheets: { name: string; headers: string[]; rows: Record<string, unknown>[] }[] = [];
   wb.eachSheet((ws) => {
+    // Spec sheets often merge column A across several rows so a single
+    // "ERP1" label spans every spec row of that server. ExcelJS reports
+    // ONLY the master cell's value; the rest come back as null and the
+    // server identifier is lost. We pull merged-cell values from
+    // `cell.master.value` so every row in the merge range carries the
+    // ERP1 / ERP2 / ERP3 label downward.
+    const colCount = Math.max(ws.columnCount ?? 0, ws.actualColumnCount ?? 0);
     const allRows: unknown[][] = [];
-    ws.eachRow({ includeEmpty: false }, (row) => {
-      const vals = row.values as unknown[];
-      allRows.push(vals.slice(1));
+    ws.eachRow({ includeEmpty: true }, (row) => {
+      const vals: unknown[] = [];
+      const cols = colCount > 0 ? colCount : (row.values as unknown[]).length;
+      for (let c = 1; c <= cols; c += 1) {
+        const cell = row.getCell(c);
+        // ExcelJS marks every cell in a merge range with a `master`
+        // pointer; for the master itself master === cell, so reading
+        // master.value is always safe.
+        const master = (cell as unknown as { master?: { value?: unknown } }).master;
+        const raw = master?.value ?? cell.value;
+        vals.push(normaliseCellValue(raw));
+      }
+      allRows.push(vals);
     });
     if (allRows.length === 0) {
       sheets.push({ name: ws.name, headers: [], rows: [] });
