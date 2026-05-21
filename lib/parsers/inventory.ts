@@ -158,6 +158,12 @@ const EXTRACTION_CASCADE = [
  *     might be a real Haiku miss (pivoted layout, OCR failure on a
  *     screenshot, etc.) and IS worth escalating.
  */
+// Headers / sheet-name tokens that look "VM-shaped" — if a chunk's
+// preview text mentions any of these we expect VMs to be extractable.
+// Sheets with NONE of these (Notes, Cover, ReadMe, ChangeLog tabs) get
+// Haiku's 0-item verdict trusted so we don't burn Sonnet+Opus calls.
+const VM_HINT_RE = /\b(vcpu|cpu|core|memory|ram|gb|mb|mib|disk|storage|server|host|vm|hostname|powerstate|virtual\s*machine|os|operating\s*system)\b/i;
+
 function looksIncomplete(items: InventoryItem[], chunk: UploadChunk): boolean {
   if (items.length === 0) {
     const block = chunk.contentBlocks[0];
@@ -165,7 +171,17 @@ function looksIncomplete(items: InventoryItem[], chunk: UploadChunk): boolean {
       (chunk.kind === "text" || chunk.filename.startsWith("pasted-content-")) &&
       block?.type === "text" &&
       block.text.length < 1500;
-    return !isSmallText;
+    if (isSmallText) return false;
+    // Per-sheet chunks where the preview has no VM-shaped headers — a
+    // Notes / Cover / ChangeLog tab. Trust Haiku's 0 verdict; escalating
+    // would waste Sonnet + Opus tokens on a sheet that genuinely has no
+    // VMs. Only fires on spreadsheet chunks (PDFs / images / large text
+    // still escalate as before).
+    if (chunk.kind === "spreadsheet" && block?.type === "text") {
+      const preview = block.text.slice(0, 4000); // first ~4k chars covers headers + first rows
+      if (!VM_HINT_RE.test(preview)) return false;
+    }
+    return true;
   }
   const broken = items.filter((i) => i.vcpu === 0 && i.memoryGb === 0).length;
   return broken / items.length >= 0.5;
