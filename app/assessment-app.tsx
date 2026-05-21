@@ -16,6 +16,8 @@ import {
   LANDING_ZONE_LABELS,
   LZ_COMPONENTS,
   LZ_TIER_COMPONENTS,
+  recommendLandingZoneTier,
+  summariseInventory,
   type LandingZoneTier,
   type LzCategory,
 } from "@/lib/pillars/landing-zone";
@@ -596,6 +598,10 @@ export default function AssessmentApp({ user }: { user: string }) {
   // ExpressRoute, etc.) to every workload BOM. Defaults to "none" so the
   // estimate matches existing behaviour until the user picks a tier.
   const [landingZoneTier, setLandingZoneTier] = useState<LandingZoneTier>("none");
+  // True after we've applied the auto-recommendation once (or after a
+  // project load sets the tier explicitly). Stops the recommendation
+  // from clobbering the user's manual choice after they tweak the picker.
+  const [lzAutoApplied, setLzAutoApplied] = useState(false);
   // Customize-components mode for the Landing Zone picker. When off,
   // pricing uses the tier preset; when on, the explicit `lzComponents`
   // set drives the BOM.
@@ -642,6 +648,36 @@ export default function AssessmentApp({ user }: { user: string }) {
   // Running token spend across the AI calls in this session. Reset
   // when the user starts a fresh analysis or clears inputs.
   const [aiUsage, setAiUsage] = useState<UsageTotal>(emptyUsage());
+
+  // CAF "right-size the hub" recommendation. Driven by the AI's
+  // complexity verdict + the extracted inventory shape + the design
+  // knobs the user has already touched (BCDR, HA, scope pillars).
+  // Always computed; only AUTO-APPLIED once per fresh analysis so a
+  // user override stays sticky.
+  const lzRecommendation = useMemo(() => {
+    const inv = summariseInventory(items);
+    const haCount = items.filter((it) => it.hasHa).length;
+    return recommendLandingZoneTier({
+      complexity: profile?.complexity,
+      vmCount: inv.vmCount,
+      sqlVmCount: inv.sqlVmCount,
+      haVmCount: haCount,
+      enableBcdr,
+      activePillars,
+    });
+  }, [items, profile?.complexity, enableBcdr, activePillars]);
+
+  useEffect(() => {
+    // Auto-apply only when items first land via a fresh Stage 1 analysis
+    // (lzAutoApplied still false) and the user hasn't manually picked
+    // anything yet (tier still "none"). Saved-project loads set
+    // lzAutoApplied=true so the persisted tier wins.
+    if (!lzAutoApplied && items.length > 0 && landingZoneTier === "none") {
+      setLandingZoneTier(lzRecommendation.tier);
+      setLzAutoApplied(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.length, lzAutoApplied]);
 
   const totalBytes = useMemo(() => {
     let n = 0;
@@ -777,6 +813,8 @@ export default function AssessmentApp({ user }: { user: string }) {
     setAppName("");
     setLzCustomize(false);
     setLzComponents(new Set());
+    setLandingZoneTier("none");
+    setLzAutoApplied(false);
     setEnableBcdr(false);
     setPillarParams({});
     setLoadedFileMeta([]);
@@ -856,6 +894,9 @@ export default function AssessmentApp({ user }: { user: string }) {
       setApplyHeadroom(p.applyHeadroom);
       setHeadroom(p.headroom);
       setLandingZoneTier((p.landingZoneTier as LandingZoneTier | undefined) ?? "none");
+      // The saved project already carries an explicit tier choice; don't
+      // let the auto-recommendation override it after items hydrate.
+      setLzAutoApplied(true);
       setEnableBcdr(!!p.enableBcdr);
       setPillarParams((p.pillarParams as Record<string, Record<string, unknown>>) ?? {});
       if (p.landingZoneComponents && p.landingZoneComponents.length > 0) {
@@ -1766,7 +1807,12 @@ export default function AssessmentApp({ user }: { user: string }) {
             <select
               id="landingZoneTier"
               value={landingZoneTier}
-              onChange={(e) => setLandingZoneTier(e.target.value as LandingZoneTier)}
+              onChange={(e) => {
+                // User-driven change pins their choice — the auto-
+                // recommendation effect won't fire again this session.
+                setLzAutoApplied(true);
+                setLandingZoneTier(e.target.value as LandingZoneTier);
+              }}
             >
               {(Object.keys(LANDING_ZONE_LABELS) as LandingZoneTier[]).map((t) => (
                 <option key={t} value={t}>{LANDING_ZONE_LABELS[t]}</option>
@@ -1775,6 +1821,33 @@ export default function AssessmentApp({ user }: { user: string }) {
             <p className="helper" style={{ marginTop: "0.5rem" }}>
               {LANDING_ZONE_DESCRIPTIONS[landingZoneTier]}
             </p>
+
+            {/* CAF "right-size the hub" recommendation. Always shown so
+                the user understands why the picker landed where it did
+                and what would push them to a different tier. */}
+            {items.length > 0 && (
+              <p
+                className="helper"
+                style={{ marginTop: "0.35rem", fontStyle: "italic" }}
+              >
+                <strong>Recommended:</strong> {LANDING_ZONE_LABELS[lzRecommendation.tier]} — {lzRecommendation.reason}
+                {landingZoneTier !== lzRecommendation.tier && (
+                  <>
+                    {" "}
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={() => {
+                        setLandingZoneTier(lzRecommendation.tier);
+                        setLzAutoApplied(true);
+                      }}
+                    >
+                      Apply recommendation
+                    </button>
+                  </>
+                )}
+              </p>
+            )}
 
             {/* Customize-components escape hatch. Opt in to tweak the
                 tier's defaults without abandoning the picker shorthand. */}
