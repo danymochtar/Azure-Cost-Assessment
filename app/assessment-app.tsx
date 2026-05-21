@@ -17,6 +17,7 @@ import {
   type LandingZoneTier,
 } from "@/lib/pillars/landing-zone";
 import type { AssessmentProfile, BomLine, ComputeMode, InventoryItem, Notice, PricingMode } from "@/lib/models";
+import { emptyUsage, mergeUsage, type UsageTotal } from "@/lib/usage";
 
 const MAX_TOTAL_UPLOAD_MB = 4;
 
@@ -225,6 +226,67 @@ function NoticePill({ n }: { n: Notice }) {
   );
 }
 
+// Token-spend recap for the AI calls (classify + extract) that produced
+// this assessment. Pricing comes from lib/usage.ts — Anthropic public
+// list rates per million tokens.
+function AiSpendRecap({ usage }: { usage: UsageTotal }) {
+  const modelRows = (Object.keys(usage.byModel) as Array<keyof typeof usage.byModel>)
+    .map((k) => ({ key: k as string, ...usage.byModel[k] }))
+    .filter((m) => m.calls > 0);
+  return (
+    <details className="ai-spend-recap" style={{ marginTop: "1rem" }}>
+      <summary>
+        <span className="ai-spend-label">AI processing spend</span>
+        <span className="ai-spend-total">
+          USD ${usage.costUsd.toFixed(4)} ·
+          {" "}{(usage.inputTokens + usage.outputTokens).toLocaleString()} tokens
+        </span>
+      </summary>
+      <div className="ai-spend-body">
+        <table className="ai-spend-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th className="num">Calls</th>
+              <th className="num">Input tokens</th>
+              <th className="num">Output tokens</th>
+              <th className="num">Cost (USD)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {modelRows.map((m) => (
+              <tr key={m.key}>
+                <td style={{ textTransform: "capitalize" }}>{m.key}</td>
+                <td className="num">{m.calls}</td>
+                <td className="num">{m.inputTokens.toLocaleString()}</td>
+                <td className="num">{m.outputTokens.toLocaleString()}</td>
+                <td className="num">${m.costUsd.toFixed(4)}</td>
+              </tr>
+            ))}
+            <tr>
+              <td><strong>Total</strong></td>
+              <td className="num">
+                <strong>{modelRows.reduce((s, m) => s + m.calls, 0)}</strong>
+              </td>
+              <td className="num"><strong>{usage.inputTokens.toLocaleString()}</strong></td>
+              <td className="num"><strong>{usage.outputTokens.toLocaleString()}</strong></td>
+              <td className="num"><strong>${usage.costUsd.toFixed(4)}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+        {(usage.cacheCreationInputTokens > 0 || usage.cacheReadInputTokens > 0) && (
+          <p className="helper" style={{ marginTop: "0.5rem" }}>
+            Cache: {usage.cacheReadInputTokens.toLocaleString()} read · {usage.cacheCreationInputTokens.toLocaleString()} written
+          </p>
+        )}
+        <p className="helper" style={{ marginTop: "0.5rem" }}>
+          Per Anthropic public retail: Haiku $1/$5, Sonnet $3/$15, Opus $15/$75 per 1M input/output tokens (cache reads ~10× cheaper).
+        </p>
+      </div>
+    </details>
+  );
+}
+
 function loadingLabel(stage: "idle" | "classifying" | "extracting" | "pricing"): string {
   if (stage === "classifying" || stage === "extracting") return "Analyzing workload…";
   if (stage === "pricing") return "Pricing meters…";
@@ -300,6 +362,9 @@ export default function AssessmentApp({ user }: { user: string }) {
   const [stage, setStage] = useState<"idle" | "classifying" | "extracting" | "pricing">("idle");
   const [error, setError] = useState<string>("");
   const [notices, setNotices] = useState<Notice[]>([]);
+  // Running token spend across the AI calls in this session. Reset
+  // when the user starts a fresh analysis or clears inputs.
+  const [aiUsage, setAiUsage] = useState<UsageTotal>(emptyUsage());
 
   const totalBytes = useMemo(() => {
     let n = 0;
@@ -357,6 +422,7 @@ export default function AssessmentApp({ user }: { user: string }) {
       setLines([]);
       setError("");
       setNotices([]);
+      setAiUsage(emptyUsage());
     }
   }, [files.length, pastedText, stage1Confirmed, stage2Confirmed, items.length, lines.length]);
 
@@ -424,6 +490,7 @@ export default function AssessmentApp({ user }: { user: string }) {
     setLines([]);
     setError("");
     setNotices([]);
+    setAiUsage(emptyUsage());
   }
 
   async function signOut() {
@@ -527,6 +594,7 @@ export default function AssessmentApp({ user }: { user: string }) {
     }
     setError("");
     setNotices([]);
+    setAiUsage(emptyUsage());
     setProfile(null);
     setPerFile([]);
     setItems([]);
@@ -535,9 +603,10 @@ export default function AssessmentApp({ user }: { user: string }) {
     try {
       const resp = await fetch("/api/classify", { method: "POST", body: fd });
       if (!resp.ok) throw new Error(`Analyze HTTP ${resp.status}: ${await resp.text()}`);
-      const data = (await resp.json()) as { profile: AssessmentProfile; perFile: PerFile[] };
+      const data = (await resp.json()) as { profile: AssessmentProfile; perFile: PerFile[]; usage?: UsageTotal };
       setProfile(data.profile);
       setPerFile(data.perFile ?? []);
+      if (data.usage) setAiUsage((u) => mergeUsage(u, data.usage!));
       const seeded = seedPillarsFromProfile(data.profile);
       setActivePillars(seeded);
       setDetectedPillars(new Set(seeded));
@@ -553,9 +622,10 @@ export default function AssessmentApp({ user }: { user: string }) {
         setStage("extracting");
         const eResp = await fetch("/api/extract", { method: "POST", body: fd2 });
         if (!eResp.ok) throw new Error(`Extract HTTP ${eResp.status}: ${await eResp.text()}`);
-        const eData = (await eResp.json()) as { items: InventoryItem[]; notices?: Notice[] };
+        const eData = (await eResp.json()) as { items: InventoryItem[]; notices?: Notice[]; usage?: UsageTotal };
         setItems(eData.items);
         if (eData.notices?.length) setNotices(eData.notices);
+        if (eData.usage) setAiUsage((u) => mergeUsage(u, eData.usage!));
       } else if (!PORTED_PILLARS.has(data.profile.workloadType)) {
         setNotices([
           {
@@ -1480,6 +1550,8 @@ export default function AssessmentApp({ user }: { user: string }) {
               );
             })}
           </div>
+
+          {aiUsage.costUsd > 0 && <AiSpendRecap usage={aiUsage} />}
 
           <p className="helper" style={{ marginTop: "0.75rem", textAlign: "center" }}>
             Full breakdown — SKU, meter, unit price, region, assumptions — is in the Excel export.

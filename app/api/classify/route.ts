@@ -19,7 +19,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No files in form" }, { status: 400 });
     }
 
-    const { perFile, aggregate } = await classifyMany(blobs);
+    const { perFile, aggregate, usage } = await classifyMany(blobs);
     return NextResponse.json({
       perFile: perFile.map((p) => ({
         filename: p.filename,
@@ -27,6 +27,7 @@ export async function POST(req: Request) {
         error: p.error,
       })),
       profile: aggregate,
+      usage,
     });
   } catch (e) {
     const err = e as Error;
