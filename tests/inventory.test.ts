@@ -69,6 +69,32 @@ describe("inventory escalation heuristic", () => {
   });
 });
 
+describe("chunk-count heuristic", () => {
+  // Mirror the chunking math used by lib/parsers/content.ts → prepareChunks
+  function chunkCount(totalRows: number, rowsPerChunk = 300): number {
+    if (totalRows <= rowsPerChunk) return 1;
+    return Math.ceil(totalRows / rowsPerChunk);
+  }
+
+  it("returns 1 for small files (single-chunk fast path)", () => {
+    expect(chunkCount(50)).toBe(1);
+    expect(chunkCount(300)).toBe(1);
+  });
+
+  it("splits 2000-row RVTools export into 7 chunks (the user's case)", () => {
+    expect(chunkCount(2000)).toBe(7);
+  });
+
+  it("splits 500 rows into 2 chunks", () => {
+    expect(chunkCount(500)).toBe(2);
+  });
+
+  it("respects a custom rowsPerChunk", () => {
+    expect(chunkCount(1000, 100)).toBe(10);
+    expect(chunkCount(1000, 500)).toBe(2);
+  });
+});
+
 describe("unique header disambiguation", () => {
   // Mirror the helper in lib/parsers/content.ts
   function uniqueHeaders(raw: string[]): string[] {

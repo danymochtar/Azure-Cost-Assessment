@@ -255,3 +255,117 @@ export async function prepare(
 
   throw new Error(`Unsupported file type: ${filename}. Supported: ${ALL_SUPPORTED_EXTS.join(", ")}`);
 }
+
+/**
+ * Token-aware preview chunking for large spreadsheets.
+ *
+ * Anthropic enforces an organisation-level "input tokens per minute"
+ * rate limit (50,000 TPM on Tier 1). A full RVTools export with 2,000+
+ * VMs serialised into a single text preview easily exceeds that in
+ * one request, returning 429 before the API even runs. Splitting the
+ * rows into smaller chunks lets each call stay under the limit; the
+ * inventory extractor concatenates the per-chunk results.
+ *
+ * Returns one UploadContent per chunk. For non-spreadsheet files
+ * (PDF / DOCX / image / text) chunking isn't safe, so we return a
+ * single-element array containing the unchunked content.
+ */
+export interface UploadChunk extends UploadContent {
+  chunkIndex: number;     // 0-based
+  totalChunks: number;
+  chunkLabel?: string;    // "rows 1-300 of 2000"
+}
+
+export async function prepareChunks(
+  data: Buffer,
+  filename: string,
+  rowsPerChunk = 300,
+): Promise<UploadChunk[]> {
+  const sizeMb = data.length / (1024 * 1024);
+  if (sizeMb > MAX_FILE_MB) {
+    throw new Error(`File too large: ${sizeMb.toFixed(1)} MB (cap ${MAX_FILE_MB} MB).`);
+  }
+
+  const kind = kindFromName(filename);
+  if (kind !== "spreadsheet") {
+    const uc = await prepare(data, filename, null);
+    return [{ ...uc, chunkIndex: 0, totalChunks: 1 }];
+  }
+
+  // Read all sheets once, then decide whether to chunk.
+  let sheets: { name: string; headers: string[]; rows: Record<string, unknown>[] }[];
+  if (filename.toLowerCase().endsWith(".csv")) {
+    const text = data.toString("utf-8");
+    const { headers, rows } = parseCsv(text);
+    sheets = [{ name: "csv", headers, rows: rows as Record<string, unknown>[] }];
+  } else {
+    sheets = (await readWorkbook(data, filename)).sheets;
+  }
+
+  const totalRows = sheets.reduce((sum, s) => sum + s.rows.length, 0);
+
+  // Single-chunk fast path: small files behave exactly like prepare()
+  // used to. No batching overhead for the common RVTools-with-50-VMs case.
+  if (totalRows <= rowsPerChunk) {
+    const uc = await prepare(data, filename, null);
+    return [{ ...uc, chunkIndex: 0, totalChunks: 1 }];
+  }
+
+  // Flatten (sheet, row) pairs into a single sequence so we can chunk
+  // across sheet boundaries cleanly.
+  const all: { sheetIdx: number; rowIdx: number }[] = [];
+  for (let si = 0; si < sheets.length; si += 1) {
+    for (let ri = 0; ri < sheets[si].rows.length; ri += 1) {
+      all.push({ sheetIdx: si, rowIdx: ri });
+    }
+  }
+
+  const chunks: UploadChunk[] = [];
+  const totalChunks = Math.ceil(all.length / rowsPerChunk);
+
+  for (let c = 0; c < totalChunks; c += 1) {
+    const start = c * rowsPerChunk;
+    const end = Math.min(start + rowsPerChunk, all.length);
+    const slice = all.slice(start, end);
+
+    // Group the chunk's rows back by their owning sheet so the preview
+    // stays readable (one section per sheet within this chunk).
+    const bySheet = new Map<number, number[]>();
+    for (const { sheetIdx, rowIdx } of slice) {
+      if (!bySheet.has(sheetIdx)) bySheet.set(sheetIdx, []);
+      bySheet.get(sheetIdx)!.push(rowIdx);
+    }
+
+    const out: string[] = [
+      `# ${filename}`,
+      `Chunk ${c + 1} of ${totalChunks} (rows ${start + 1}–${end} of ${all.length})`,
+      `Sheets in this chunk: ${[...bySheet.keys()].map((i) => sheets[i].name).join(", ")}`,
+      "",
+    ];
+
+    for (const [sheetIdx, rowIdxs] of bySheet.entries()) {
+      const s = sheets[sheetIdx];
+      out.push(`## Sheet: ${s.name} (${s.rows.length.toLocaleString()} rows total; this chunk: ${rowIdxs.length})`);
+      out.push(`Columns: ${s.headers.join(" | ")}`);
+      out.push("Rows:");
+      for (const ri of rowIdxs) {
+        const r = s.rows[ri];
+        out.push(s.headers.map((h) => String(r[h] ?? "")).join(" | "));
+      }
+      out.push("");
+    }
+
+    chunks.push({
+      kind: "spreadsheet",
+      filename,
+      contentBlocks: [{ type: "text", text: out.join("\n") }],
+      textSummary: `Spreadsheet chunk ${c + 1}/${totalChunks} — rows ${start + 1}–${end} of ${all.length}`,
+      rowCount: end - start,
+      chunkIndex: c,
+      totalChunks,
+      chunkLabel: `rows ${start + 1}–${end} of ${all.length}`,
+    });
+  }
+
+  return chunks;
+}

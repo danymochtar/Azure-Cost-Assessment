@@ -2,7 +2,7 @@ import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import { getClient } from "../anthropic";
 import type { DiskItem, InventoryItem } from "../models";
-import { prepare } from "./content";
+import { prepareChunks, type UploadChunk } from "./content";
 
 const SYSTEM_PROMPT = `You are an expert data engineer specializing in IT infrastructure inventory discovery.
 
@@ -219,82 +219,190 @@ function isTransient(e: unknown): boolean {
   );
 }
 
-/**
- * Extract VM inventory with a quality-gated model cascade:
- *
- *   1. Haiku 4.5  — fast + cheap. Almost always good for clean RVTools / CSV.
- *   2. Sonnet 4.6 — escalate when Haiku returns zeros (pivoted layouts,
- *                   merged headers, key-value sheets).
- *   3. Opus 4.7   — escalate when Sonnet also returns zeros (very complex
- *                   PDFs / free-text spec sheets / mixed pivoted+narrative).
- *
- * Each retry includes a hint about WHY the previous attempt was deemed
- * incomplete, so the stronger model knows what to look for.
- *
- * Transient errors (529, 5xx, network blips) also fall through to the
- * next model in the cascade — same as the prior `callWithCascade` policy.
- *
- * Returns the BEST result seen, even if Opus also came back incomplete
- * (the assumption sheet in Excel will surface zero-value fields).
- */
-export async function extractInventory(
-  data: Buffer,
-  filename: string,
-  apiKey?: string,
-): Promise<ExtractionResult> {
-  const uc = await prepare(data, filename, null);
-  const client = getClient(apiKey);
+function isRateLimit(e: unknown): boolean {
+  const err = e as { status?: number };
+  return err?.status === 429;
+}
 
+/** Sleep helper; resolves after `ms` milliseconds. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+/**
+ * Best-effort extraction of the rate-limit retry interval. Anthropic
+ * 429s include a `retry-after` header (seconds) plus the message text
+ * which mentions tokens-per-minute. We grab the header when present,
+ * default to 30 s otherwise. Capped at 90 s so we don't hit the Vercel
+ * function timeout while waiting.
+ */
+function rateLimitSleepMs(e: unknown): number {
+  const err = e as { headers?: Record<string, string> };
+  const raw = err?.headers?.["retry-after"] ?? err?.headers?.["Retry-After"];
+  const n = raw ? parseInt(String(raw), 10) : NaN;
+  if (Number.isFinite(n) && n > 0) return Math.min(n, 90) * 1000;
+  return 30_000;
+}
+
+/**
+ * Run one quality-gated cascade (Haiku → Sonnet → Opus) over a single
+ * chunk's content blocks. Each retry includes a hint about WHY the
+ * previous attempt was incomplete, so the stronger model knows what
+ * to look for.
+ *
+ * On 429 (rate limit) we sleep the suggested retry-after window and
+ * try the SAME model again (up to 2 retries) — escalating doesn't
+ * help because all three models share the same org-level TPM.
+ */
+async function extractOneChunk(
+  client: Anthropic,
+  chunk: UploadChunk,
+  trail: string[],
+): Promise<{ items: InventoryItem[]; summary: string; modelUsed: string } | null> {
   let best: { items: InventoryItem[]; summary: string; modelUsed: string } | null = null;
-  const escalations: string[] = [];
+  const labelPrefix = chunk.totalChunks > 1 ? `[${chunk.chunkLabel}] ` : "";
 
   for (let i = 0; i < EXTRACTION_CASCADE.length; i += 1) {
     const model = EXTRACTION_CASCADE[i];
     const retryHint = best ? incompleteReason(best.items) : "";
 
-    try {
-      const r = await callExtractor(client, model, uc.contentBlocks, filename, uc.textSummary, retryHint);
-      if (!r) {
-        escalations.push(`${model}: no tool_use block`);
-        continue;
+    let attempt = 0;
+    while (attempt < 3) {
+      try {
+        const r = await callExtractor(
+          client,
+          model,
+          chunk.contentBlocks,
+          chunk.filename,
+          chunk.textSummary,
+          retryHint,
+        );
+        if (!r) {
+          trail.push(`${labelPrefix}${model}: no tool_use block`);
+          break; // try next model
+        }
+        best = { ...r, modelUsed: model };
+        if (!looksIncomplete(r.items)) {
+          if (i > 0) trail.push(`${labelPrefix}succeeded on ${model} after ${i} earlier attempt(s)`);
+          return best;
+        }
+        trail.push(`${labelPrefix}${model}: ${incompleteReason(r.items)}`);
+        break; // escalate to next model
+      } catch (e) {
+        if (isRateLimit(e) && attempt < 2) {
+          const wait = rateLimitSleepMs(e);
+          trail.push(`${labelPrefix}${model}: rate-limited, waiting ${(wait / 1000).toFixed(0)}s before retry`);
+          await sleep(wait);
+          attempt += 1;
+          continue;
+        }
+        if (isTransient(e)) {
+          trail.push(`${labelPrefix}${model}: transient ${(e as Error).message}`);
+          break; // try next model in cascade
+        }
+        throw e;
       }
-      // Always remember the latest non-null result so we can fall back to
-      // the best-effort output even if all three passes are incomplete.
-      best = { ...r, modelUsed: model };
-      if (!looksIncomplete(r.items)) {
-        if (i > 0) escalations.push(`succeeded on ${model} after ${i} earlier attempt(s)`);
-        return {
-          items: r.items,
-          summary: r.summary,
-          mode: "direct",
-          modelUsed: model,
-          escalations: escalations.length ? escalations : undefined,
-        };
-      }
-      escalations.push(`${model}: ${incompleteReason(r.items)}`);
-    } catch (e) {
-      if (isTransient(e)) {
-        escalations.push(`${model}: transient ${(e as Error).message}`);
-        continue;
-      }
-      // Hard error — surface it
-      throw e;
     }
   }
 
-  if (best) {
+  return best;
+}
+
+/**
+ * Extract VM inventory with a quality-gated model cascade across one
+ * or more file chunks.
+ *
+ * Sizing strategy:
+ *
+ *   1. `prepareChunks` slices spreadsheets larger than 300 rows into
+ *      smaller previews so each request stays well under the org's
+ *      50,000 input-tokens-per-minute rate limit.
+ *   2. Each chunk runs through the Haiku → Sonnet → Opus cascade
+ *      independently, escalating only when the chunk's result looks
+ *      incomplete (≥50% zeros or no items).
+ *   3. Between chunks we sleep 12 s so a 5-chunk file stays comfortably
+ *      below the TPM cap (10s gives ~6 cps × ~8k tok/call = 48k TPM).
+ *   4. Results from every chunk are concatenated and de-duplicated by
+ *      VM name (case-insensitive) — same merge policy used at the
+ *      cross-file level in /api/extract/route.ts.
+ *
+ * Non-spreadsheet files (PDF / DOCX / image / text) bypass chunking
+ * and run as a single chunk.
+ */
+const INTER_CHUNK_DELAY_MS = 12_000;
+const ROWS_PER_CHUNK = 300;
+
+export async function extractInventory(
+  data: Buffer,
+  filename: string,
+  apiKey?: string,
+): Promise<ExtractionResult> {
+  const chunks = await prepareChunks(data, filename, ROWS_PER_CHUNK);
+  const client = getClient(apiKey);
+
+  const escalations: string[] = [];
+  const merged: InventoryItem[] = [];
+  const seen = new Set<string>();
+  let bestSummary = "";
+  let bestModelUsed = "";
+
+  if (chunks.length > 1) {
+    escalations.push(
+      `${filename}: spreadsheet split into ${chunks.length} chunks (${ROWS_PER_CHUNK} rows each) ` +
+        `to stay under Anthropic's input-tokens-per-minute rate limit.`,
+    );
+  }
+
+  for (let ci = 0; ci < chunks.length; ci += 1) {
+    const chunk = chunks[ci];
+
+    // Throttle between chunks — first chunk runs immediately.
+    if (ci > 0) await sleep(INTER_CHUNK_DELAY_MS);
+
+    let result: { items: InventoryItem[]; summary: string; modelUsed: string } | null;
+    try {
+      result = await extractOneChunk(client, chunk, escalations);
+    } catch (e) {
+      escalations.push(`${chunk.chunkLabel ?? `chunk ${ci + 1}`}: hard error ${(e as Error).message}`);
+      continue;
+    }
+
+    if (!result) {
+      escalations.push(`${chunk.chunkLabel ?? `chunk ${ci + 1}`}: no usable result across Haiku → Sonnet → Opus`);
+      continue;
+    }
+
+    for (const it of result.items) {
+      const key = (it.name ?? "").trim().toLowerCase();
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      merged.push(it);
+    }
+    if (!bestSummary && result.summary) bestSummary = result.summary;
+    if (!bestModelUsed) bestModelUsed = result.modelUsed;
+    else if (result.modelUsed && result.modelUsed !== bestModelUsed) {
+      // Mixed models across chunks — surface that explicitly.
+      bestModelUsed = `${bestModelUsed}+${result.modelUsed}`;
+    }
+  }
+
+  if (merged.length === 0) {
     return {
-      items: best.items,
-      summary: best.summary,
-      mode: "direct",
-      modelUsed: best.modelUsed,
+      items: [],
+      summary: "Extractor returned no usable result across Haiku → Sonnet → Opus.",
+      mode: "failed",
       escalations,
     };
   }
+
   return {
-    items: [],
-    summary: "Extractor returned no usable result across Haiku → Sonnet → Opus.",
-    mode: "failed",
-    escalations,
+    items: merged,
+    summary:
+      chunks.length > 1
+        ? `${bestSummary || "Extracted across chunks."} (Merged ${merged.length} unique VMs from ${chunks.length} chunks.)`
+        : bestSummary,
+    mode: "direct",
+    modelUsed: bestModelUsed,
+    escalations: escalations.length ? escalations : undefined,
   };
 }
