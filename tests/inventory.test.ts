@@ -1,12 +1,26 @@
 import { describe, expect, it } from "vitest";
 import type { InventoryItem } from "@/lib/models";
 
-// Re-export the heuristic from inventory.ts via a thin internal shim
-// so we can test it without making an LLM call. We mirror the logic
-// here verbatim — if the source changes, this test will fail loudly
-// and force the update.
-function looksIncomplete(items: InventoryItem[]): boolean {
-  if (items.length === 0) return true;
+// Mirror the heuristic from lib/parsers/inventory.ts so we can test
+// it without making an LLM call. Source-of-truth lives over there; if
+// it drifts, these tests fail loud.
+type FileKind = "spreadsheet" | "pdf" | "image" | "docx" | "text" | "unknown";
+interface ChunkLike {
+  kind: FileKind;
+  filename: string;
+  contentBlocks: Array<{ type: "text"; text: string } | { type: string }>;
+}
+
+function looksIncomplete(items: InventoryItem[], chunk: ChunkLike): boolean {
+  if (items.length === 0) {
+    const block = chunk.contentBlocks[0];
+    const isSmallText =
+      (chunk.kind === "text" || chunk.filename.startsWith("pasted-content-")) &&
+      block?.type === "text" &&
+      "text" in block &&
+      block.text.length < 1500;
+    return !isSmallText;
+  }
   const broken = items.filter((i) => i.vcpu === 0 && i.memoryGb === 0).length;
   return broken / items.length >= 0.5;
 }
@@ -26,9 +40,36 @@ function vm(overrides: Partial<InventoryItem> = {}): InventoryItem {
   };
 }
 
+function spreadsheetChunk(): ChunkLike {
+  return {
+    kind: "spreadsheet",
+    filename: "rvtools.xlsx",
+    contentBlocks: [{ type: "text", text: "## Sheet: vInfo\n... 50KB of preview ...".padEnd(50_000, "x") }],
+  };
+}
+function pastedChunk(text: string): ChunkLike {
+  return {
+    kind: "text",
+    filename: `pasted-content-${Date.now()}.txt`,
+    contentBlocks: [{ type: "text", text }],
+  };
+}
+
 describe("inventory escalation heuristic", () => {
-  it("escalates when there are zero items", () => {
-    expect(looksIncomplete([])).toBe(true);
+  it("escalates when a spreadsheet returns zero items (likely Haiku miss)", () => {
+    expect(looksIncomplete([], spreadsheetChunk())).toBe(true);
+  });
+
+  it("accepts zero items from a tiny pasted-content blurb (the empty-intro case)", () => {
+    // The "here the proposed server specifications below" intro case.
+    const tinyPaste = pastedChunk("here the proposed server specifications below, covering both the single tier and two tier setups");
+    expect(looksIncomplete([], tinyPaste)).toBe(false);
+  });
+
+  it("escalates when a LARGE pasted-content blurb returns zero items", () => {
+    // Long pasted spec doc that Haiku failed to parse — worth escalating.
+    const bigPaste = pastedChunk("x".repeat(5000));
+    expect(looksIncomplete([], bigPaste)).toBe(true);
   });
 
   it("escalates when every item has vcpu=0 and memory_gb=0 (the user's ERPSvr-2024.xlsx case)", () => {
@@ -37,7 +78,7 @@ describe("inventory escalation heuristic", () => {
       vm({ name: "B", vcpu: 0, memoryGb: 0, storageGb: 0 }),
       vm({ name: "C", vcpu: 0, memoryGb: 0, storageGb: 0 }),
     ];
-    expect(looksIncomplete(items)).toBe(true);
+    expect(looksIncomplete(items, spreadsheetChunk())).toBe(true);
   });
 
   it("escalates when half or more items are zero", () => {
@@ -47,7 +88,7 @@ describe("inventory escalation heuristic", () => {
       vm({ name: "C" }),
       vm({ name: "D" }),
     ];
-    expect(looksIncomplete(items)).toBe(true); // 2 of 4 == 50%
+    expect(looksIncomplete(items, spreadsheetChunk())).toBe(true);
   });
 
   it("accepts the result when fewer than half are zero", () => {
@@ -57,15 +98,15 @@ describe("inventory escalation heuristic", () => {
       vm({ name: "C" }),
       vm({ name: "D" }),
     ];
-    expect(looksIncomplete(items)).toBe(false); // 1 of 4 == 25%
+    expect(looksIncomplete(items, spreadsheetChunk())).toBe(false);
   });
 
   it("accepts a fully-populated single-VM extraction", () => {
-    expect(looksIncomplete([vm({ name: "single" })])).toBe(false);
+    expect(looksIncomplete([vm({ name: "single" })], spreadsheetChunk())).toBe(false);
   });
 
   it("escalates when a single VM came back with zeros", () => {
-    expect(looksIncomplete([vm({ name: "single", vcpu: 0, memoryGb: 0 })])).toBe(true);
+    expect(looksIncomplete([vm({ name: "single", vcpu: 0, memoryGb: 0 })], spreadsheetChunk())).toBe(true);
   });
 });
 

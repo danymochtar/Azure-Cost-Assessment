@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle, AlertTriangle, BadgeCheck, Calculator, Cloud, Download,
   FileText, Files, Loader2, LogOut, Receipt, RefreshCcw, Search, Server,
@@ -240,6 +240,61 @@ export default function AssessmentApp({ user }: { user: string }) {
   }, []);
   const removeFile = (i: number) => setFiles((curr) => curr.filter((_, idx) => idx !== i));
 
+  // If the user clears every file + paste content after having already
+  // analyzed, snap the whole page back to a clean Stage 1 — Stage 2/3/4
+  // should not linger with stale classification or BOM data.
+  useEffect(() => {
+    const empty = files.length === 0 && !pastedText.trim();
+    if (empty && (stage1Confirmed || stage2Confirmed || items.length > 0 || lines.length > 0)) {
+      setStage1Confirmed(false);
+      setStage2Confirmed(false);
+      setProfile(null);
+      setPerFile([]);
+      setActivePillars(new Set());
+      setDetectedPillars(new Set());
+      setItems([]);
+      setLines([]);
+      setError("");
+      setWarnings([]);
+    }
+  }, [files.length, pastedText, stage1Confirmed, stage2Confirmed, items.length, lines.length]);
+
+  // Claude-chat-style paste: anywhere on the page, paste an image, file,
+  // or text from the clipboard. Files / images land in the file list;
+  // text goes into the pasted-content textarea (default browser behaviour
+  // when the textarea is focused). We only intercept when the clipboard
+  // carries actual file items.
+  useEffect(() => {
+    function onPaste(e: ClipboardEvent) {
+      const dt = e.clipboardData;
+      if (!dt) return;
+
+      const dropped: File[] = [];
+      for (const item of Array.from(dt.items)) {
+        if (item.kind !== "file") continue;
+        const f = item.getAsFile();
+        if (!f) continue;
+        // Browsers often hand clipboard images a generic name like
+        // "image.png". Stamp a timestamp + the type's extension so
+        // multiple pastes don't collide in the file list.
+        const ext = (f.type.split("/")[1] || "bin").toLowerCase();
+        const looksGeneric = !f.name || /^image(\.\w+)?$/i.test(f.name);
+        const stamped = looksGeneric
+          ? new File([f], `pasted-${Date.now()}.${ext}`, { type: f.type })
+          : f;
+        dropped.push(stamped);
+      }
+      if (dropped.length === 0) return;
+
+      // We're handling these — prevent the default plain-text paste
+      // (which would try to insert binary into the focused input).
+      e.preventDefault();
+      setFiles((curr) => [...curr, ...dropped.map((file) => ({ file }))]);
+    }
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, []);
+
   function buildFormData(): FormData | null {
     const fd = new FormData();
     let count = 0;
@@ -466,8 +521,9 @@ export default function AssessmentApp({ user }: { user: string }) {
           }}
         >
           <UploadCloud className="icon-lg" strokeWidth={1.6} />
-          <strong>Tap or drop files</strong>
+          <strong>Tap, drop, or paste anywhere</strong>
           <span className="hint">Excel · CSV · PDF · Word · image · text · ≤ {MAX_TOTAL_UPLOAD_MB} MB total</span>
+          <span className="hint">⌘V / Ctrl+V works for screenshots and files too</span>
         </div>
         <input
           ref={fileRef}

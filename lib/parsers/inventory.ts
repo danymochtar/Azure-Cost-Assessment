@@ -124,12 +124,27 @@ const EXTRACTION_CASCADE = [
  *
  * An "incomplete" extraction is one where most items came back with
  * vcpu=0 AND memory_gb=0 — i.e. Claude saw the row labels but couldn't
- * read the values (pivoted layouts, badly-merged headers, etc.). We
- * also treat zero items as incomplete (the file might still have
- * extractable data with a stronger model).
+ * read the values (pivoted layouts, badly-merged headers, etc.).
+ *
+ * Zero items is more nuanced:
+ *   - For a SMALL text / pasted-content input (< ~1500 chars), zero
+ *     items is almost always definitive — the user pasted an intro
+ *     sentence or a note with no spec table. Escalating to Sonnet /
+ *     Opus would just burn tokens to get the same "nothing here"
+ *     answer. Trust Haiku.
+ *   - For spreadsheets, PDFs, images, or large text — zero items
+ *     might be a real Haiku miss (pivoted layout, OCR failure on a
+ *     screenshot, etc.) and IS worth escalating.
  */
-function looksIncomplete(items: InventoryItem[]): boolean {
-  if (items.length === 0) return true;
+function looksIncomplete(items: InventoryItem[], chunk: UploadChunk): boolean {
+  if (items.length === 0) {
+    const block = chunk.contentBlocks[0];
+    const isSmallText =
+      (chunk.kind === "text" || chunk.filename.startsWith("pasted-content-")) &&
+      block?.type === "text" &&
+      block.text.length < 1500;
+    return !isSmallText;
+  }
   const broken = items.filter((i) => i.vcpu === 0 && i.memoryGb === 0).length;
   return broken / items.length >= 0.5;
 }
@@ -282,7 +297,7 @@ async function extractOneChunk(
           break; // try next model
         }
         best = { ...r, modelUsed: model };
-        if (!looksIncomplete(r.items)) {
+        if (!looksIncomplete(r.items, chunk)) {
           if (i > 0) trail.push(`${labelPrefix}succeeded on ${model} after ${i} earlier attempt(s)`);
           return best;
         }
