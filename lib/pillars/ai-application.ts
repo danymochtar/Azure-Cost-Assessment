@@ -52,6 +52,30 @@ const ML_COMPUTE_HOURLY: Record<NonNullable<AiApplicationParams["mlComputeSku"]>
   NC4as_T4_v3: 0.526, NC24ads_A100_v4: 3.673,
 };
 
+/**
+ * Derive AiApplicationParams defaults from classifier signals so a
+ * pure infra workload doesn't ship $250/mo of AI Search by default.
+ * OpenAI / embeddings / Search / ML / Document Intelligence are only
+ * seeded when the source mentioned them.
+ */
+export function recommendAiApplicationParams(signals: Iterable<string>): AiApplicationParams {
+  const s = new Set(signals);
+  const hasLlm = s.has("azure_openai") || s.has("fine_tuning");
+  const hasRag = s.has("ai_search");
+  return {
+    openAiModel: "gpt-4o",
+    openAiInputTokensMillions: hasLlm ? 5 : 0,
+    openAiOutputTokensMillions: hasLlm ? 1 : 0,
+    openAiCachedInputTokensMillions: 0,
+    embeddingsTokensMillions: hasRag || hasLlm ? 50 : 0,
+    aiSearchTier: hasRag ? "s1" : "off",
+    aiSearchPartitions: 1,
+    mlComputeSku: s.has("gpu_vm") ? "NC4as_T4_v3" : "D8s_v5",
+    mlComputeHoursMonth: (s.has("ml_workspace") || s.has("fine_tuning") || s.has("gpu_vm")) ? 120 : 0,
+    docIntelligencePagesK: s.has("cognitive_services") ? 50 : 0,
+  };
+}
+
 export function buildAiApplicationBom(
   region: string,
   appName: string,

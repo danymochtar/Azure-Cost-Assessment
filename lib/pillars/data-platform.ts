@@ -33,6 +33,28 @@ const REDIS: Record<Exclude<NonNullable<DataPlatformParams["redisTier"]>, "off">
   premium_p1:  { rate: 0.413, label: "Premium P1 (6 GB)" },
 };
 
+/**
+ * Derive DataPlatformParams defaults from classifier signals so an
+ * AI/web workload doesn't end up with a Fabric F2 capacity in the BOM
+ * by default. SQL/Cosmos/ADLS/Fabric/Event-Hubs/Redis are only seeded
+ * when the source doc actually mentions them.
+ */
+export function recommendDataPlatformParams(signals: Iterable<string>): DataPlatformParams {
+  const s = new Set(signals);
+  return {
+    fabricCapacity:
+      s.has("fabric") || s.has("synapse") || s.has("power_bi") || s.has("databricks")
+        ? "F2" : "off",
+    sqlDbTier: (s.has("azure_sql_db") || s.has("sql_mi")) ? "gp" : "off",
+    sqlDbVcores: 2,
+    cosmosMillionRuPerMonth: s.has("cosmos_db") ? 100 : 0,
+    adlsGb: (s.has("adls_gen2") || s.has("azure_files")) ? 1000 : 0,
+    dataFactoryUsd: s.has("adf") ? 27.5 : 0,
+    eventHubsTu: s.has("event_hubs") ? 1 : 0,
+    redisTier: s.has("redis_cache") ? "standard_c1" : "off",
+  };
+}
+
 export function buildDataPlatformBom(
   region: string,
   appName: string,

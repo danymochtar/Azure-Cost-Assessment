@@ -21,6 +21,12 @@ import {
   type LandingZoneTier,
   type LzCategory,
 } from "@/lib/pillars/landing-zone";
+import { recommendModernizationParams } from "@/lib/pillars/modernization";
+import { recommendDataPlatformParams } from "@/lib/pillars/data-platform";
+import { recommendAiApplicationParams } from "@/lib/pillars/ai-application";
+import { recommendAzureSecurityParams } from "@/lib/pillars/azure-security";
+import { recommendHybridMulticloudParams } from "@/lib/pillars/hybrid-multicloud";
+import { recommendM365AndOthersParams } from "@/lib/pillars/m365-and-others";
 import type { AssessmentProfile, BomLine, ComputeMode, InventoryItem, Notice, PricingMode } from "@/lib/models";
 import { emptyUsage, mergeUsage, type UsageTotal } from "@/lib/usage";
 
@@ -589,6 +595,10 @@ export default function AssessmentApp({ user }: { user: string }) {
   // users, etc.). One sub-object per pillar id; the API merges with
   // module defaults so empty == "use the baseline".
   const [pillarParams, setPillarParams] = useState<Record<string, Record<string, unknown>>>({});
+  // True once the classifier's suggested_components have been turned
+  // into per-pillar parameter defaults. Stops the seeder from
+  // clobbering the user's manual edits — same pattern as lzAutoApplied.
+  const [pillarParamsSeeded, setPillarParamsSeeded] = useState(false);
   // Safety margin is opt-in. When `applyHeadroom` is false we pass 1.0
   // (exact 1:1 sizing) to the API; only when the checkbox is on does
   // the `headroom` value get used.
@@ -678,6 +688,27 @@ export default function AssessmentApp({ user }: { user: string }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items.length, lzAutoApplied]);
+
+  // Seed per-pillar parameter defaults from the classifier's
+  // `suggested_components`. Without this, every assessment shipped a
+  // ~$420/mo AKS line even when the source doc never mentioned
+  // containers — the BOM now starts focused on what the workload
+  // actually needs, and the user can bump counts up in the parameter
+  // form if they want to add components.
+  useEffect(() => {
+    if (pillarParamsSeeded) return;
+    if (!profile) return;
+    const signals = profile.suggestedComponents ?? [];
+    setPillarParams({
+      modernization: recommendModernizationParams(signals) as unknown as Record<string, unknown>,
+      dataPlatform: recommendDataPlatformParams(signals) as unknown as Record<string, unknown>,
+      aiApplication: recommendAiApplicationParams(signals) as unknown as Record<string, unknown>,
+      azureSecurity: recommendAzureSecurityParams(signals) as unknown as Record<string, unknown>,
+      hybridMulticloud: recommendHybridMulticloudParams(signals) as unknown as Record<string, unknown>,
+      m365AndOthers: recommendM365AndOthersParams(signals) as unknown as Record<string, unknown>,
+    });
+    setPillarParamsSeeded(true);
+  }, [profile, pillarParamsSeeded]);
 
   const totalBytes = useMemo(() => {
     let n = 0;
@@ -817,6 +848,7 @@ export default function AssessmentApp({ user }: { user: string }) {
     setLzAutoApplied(false);
     setEnableBcdr(false);
     setPillarParams({});
+    setPillarParamsSeeded(false);
     setLoadedFileMeta([]);
   }
 
@@ -899,6 +931,9 @@ export default function AssessmentApp({ user }: { user: string }) {
       setLzAutoApplied(true);
       setEnableBcdr(!!p.enableBcdr);
       setPillarParams((p.pillarParams as Record<string, Record<string, unknown>>) ?? {});
+      // Saved project carries the user's explicit per-pillar params;
+      // don't let the signal-derived seeder override them on reload.
+      setPillarParamsSeeded(true);
       if (p.landingZoneComponents && p.landingZoneComponents.length > 0) {
         setLzCustomize(true);
         setLzComponents(new Set(p.landingZoneComponents));
@@ -1888,6 +1923,9 @@ export default function AssessmentApp({ user }: { user: string }) {
             activePillars={activePillars}
             params={pillarParams}
             onChange={(pid, key, value) => {
+              // User has touched a knob — pin the params so the
+              // signal-driven seeder won't run again this session.
+              setPillarParamsSeeded(true);
               setPillarParams((prev) => ({
                 ...prev,
                 [pid]: { ...(prev[pid] ?? {}), [key]: value },

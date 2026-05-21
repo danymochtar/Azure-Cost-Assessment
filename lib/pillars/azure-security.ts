@@ -24,6 +24,23 @@ const ENTRA_USER_RATE: Record<Exclude<NonNullable<AzureSecurityParams["entraIdTi
   p2: { rate: 9.0,  label: "P2" },
 };
 
+/**
+ * Derive AzureSecurityParams defaults from classifier signals.
+ * Entra P1/P2 always defaults on (every Azure tenant has users to
+ * license); Purview/WAF/Private Link only seed when the source
+ * mentioned them.
+ */
+export function recommendAzureSecurityParams(signals: Iterable<string>): AzureSecurityParams {
+  const s = new Set(signals);
+  return {
+    entraIdTier: s.has("pim") ? "p2" : "p1",
+    entraIdUsers: 50,
+    purviewCapacityUnits: s.has("purview") ? 1 : 0,
+    wafPolicyCount: s.has("waf") ? 1 : 0,
+    privateEndpointCount: s.has("private_link") ? 5 : 0,
+  };
+}
+
 export function buildAzureSecurityBom(
   region: string,
   appName: string,
