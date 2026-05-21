@@ -674,12 +674,15 @@ details.notice-pill-expandable > p {
   }
 }
 
-/* Copyright line shown beneath login / register / forgot cards. */
+/* Copyright line shown beneath login / register / forgot cards. The
+ * parent .login-shell stacks as a column so this lives beneath the
+ * card on every viewport — no awkward right-of-card placement. */
 .copyright-line {
-  margin-top: 1.25rem;
+  margin: 0;
   text-align: center;
   font-size: 0.78rem;
   color: var(--text-muted, #64748b);
+  max-width: 380px;
 }
 
 /* AI spend recap — collapsible breakdown of token usage + USD cost
@@ -1329,8 +1332,10 @@ footer {
 .login-shell {
   min-height: 100dvh;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 1.25rem;
   padding:
     calc(1.5rem + var(--safe-top))
     calc(1.25rem + var(--safe-right))
