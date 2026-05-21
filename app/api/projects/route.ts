@@ -53,10 +53,41 @@ export async function GET() {
   const user = await findUser(username);
   if (!user) return NextResponse.json({ projects: [] });
 
-  const projects = await prisma.project.findMany({
+  // Pull `lines` and `items` JSONB too — they're needed for the recap
+  // page (monthly total = sum(lines.monthlyCost); VM count = items.length).
+  // For the dashboard payload size this is fine; project-detail loads
+  // continue to go through GET /api/projects/[id].
+  const rows = await prisma.project.findMany({
     where: { userId: user.id },
     orderBy: { updatedAt: "desc" },
-    select: { id: true, customer: true, name: true, region: true, updatedAt: true, createdAt: true },
+    select: {
+      id: true,
+      customer: true,
+      name: true,
+      region: true,
+      landingZoneTier: true,
+      items: true,
+      lines: true,
+      updatedAt: true,
+      createdAt: true,
+    },
+  });
+  const projects = rows.map((r) => {
+    const lines = Array.isArray(r.lines) ? (r.lines as Array<{ monthlyCost?: number }>) : [];
+    const items = Array.isArray(r.items) ? r.items : [];
+    const monthlyCost = lines.reduce((s, l) => s + (typeof l.monthlyCost === "number" ? l.monthlyCost : 0), 0);
+    return {
+      id: r.id,
+      customer: r.customer,
+      name: r.name,
+      region: r.region,
+      landingZoneTier: r.landingZoneTier,
+      vmCount: items.length,
+      monthlyCost: Math.round(monthlyCost * 100) / 100,
+      annualCost: Math.round(monthlyCost * 12 * 100) / 100,
+      updatedAt: r.updatedAt,
+      createdAt: r.createdAt,
+    };
   });
   return NextResponse.json({ projects });
 }

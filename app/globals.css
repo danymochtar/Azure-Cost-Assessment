@@ -1200,3 +1200,48 @@ footer {
   font-size: 0.78rem;
   color: var(--text-muted);
 }
+
+/* Saved-projects recap page */
+.projects-table-wrap { overflow-x: auto; }
+.projects-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.projects-table th,
+.projects-table td {
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.projects-table th {
+  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.projects-table td.num,
+.projects-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.projects-table td.actions,
+.projects-table th.actions { text-align: right; white-space: nowrap; }
+.projects-table td.actions a,
+.projects-table td.actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.4rem;
+}
+.category-group .cat-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.primary.small,
+.danger-ghost.small {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  border-radius: 6px;
+}

@@ -7,7 +7,8 @@ import {
   Search, Server, Settings2, Sparkles, Trash2, UploadCloud,
   User as UserIcon, X,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Tooltip } from "@/components/Tooltip";
 import { DEFAULT_REGION, regionLabel, regionsByGeography } from "@/lib/constants";
 import {
@@ -411,6 +412,20 @@ export default function AssessmentApp({ user }: { user: string }) {
     void refreshProjects();
   }, [refreshProjects]);
 
+  // Auto-load when navigated here from the projects recap page with
+  // `?load=<id>`. Strips the query param after firing so a refresh
+  // doesn't re-load the same project.
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const loadId = searchParams.get("load");
+    if (!loadId) return;
+    void loadProject(loadId);
+    router.replace("/");
+    // loadProject is stable enough — depending on it would re-trigger
+    // on every render because it's a closure over many setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   async function saveCurrentProject() {
     if (!customer.trim() || !appName.trim()) {
       setError("Set both Customer and Project name in Stage 1 before saving.");
@@ -644,6 +659,9 @@ export default function AssessmentApp({ user }: { user: string }) {
           <UserIcon size={14} />
           <span className="who">{user}</span>
         </div>
+        <Link href="/projects" className="ghost icon-only" title="Saved projects recap" aria-label="Saved projects recap">
+          <FolderOpen size={18} />
+        </Link>
         <button className="ghost icon-only" onClick={resetAll} title="Start over" aria-label="Start over">
           <RefreshCcw size={18} />
         </button>
