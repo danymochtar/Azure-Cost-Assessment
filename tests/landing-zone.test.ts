@@ -44,11 +44,22 @@ describe("buildLandingZoneBom", () => {
     expect(sum("enterprise")).toBeGreaterThan(sum("standard"));
   });
 
-  it("standard replaces Bastion Basic with Bastion Standard", () => {
-    const lines = buildLandingZoneBom("standard", "eastus2", "demo");
-    const bastion = lines.filter((l) => l.resource.startsWith("Azure Bastion"));
+  it("standard introduces Bastion Standard (Basic ships no Bastion)", () => {
+    const basic = buildLandingZoneBom("basic", "eastus2", "demo");
+    expect(basic.find((l) => l.resource.startsWith("Azure Bastion"))).toBeUndefined();
+    const std = buildLandingZoneBom("standard", "eastus2", "demo");
+    const bastion = std.filter((l) => l.resource.startsWith("Azure Bastion"));
     expect(bastion).toHaveLength(1);
     expect(bastion[0].resource).toContain("Standard");
+  });
+
+  it("basic contains exactly the 4 components per spec: Public IP, VPN, App GW, Defender Servers P1", () => {
+    const lines = buildLandingZoneBom("basic", "eastus2", "demo", [mkVm("v1")]);
+    expect(lines).toHaveLength(4);
+    expect(lines.find((l) => l.resource.startsWith("Public IP"))).toBeDefined();
+    expect(lines.find((l) => l.resource.startsWith("VPN Gateway"))).toBeDefined();
+    expect(lines.find((l) => l.resource.startsWith("Application Gateway"))).toBeDefined();
+    expect(lines.find((l) => l.resource.includes("Defender for Servers Plan 1"))).toBeDefined();
   });
 
   it("enterprise replaces Firewall Standard with Premium", () => {
@@ -78,14 +89,21 @@ describe("buildLandingZoneBom", () => {
   });
 
   describe("Defender for Cloud integration", () => {
-    it("adds no Defender lines at 'basic' beyond the Foundational CSPM (free)", () => {
-      const lines = buildLandingZoneBom("basic", "eastus2", "demo", [mkVm("vm1")]);
-      const paidDefender = lines.filter(
-        (l) =>
-          l.resource.startsWith("Microsoft Defender") &&
-          !l.resource.includes("Free"),
-      );
-      expect(paidDefender).toHaveLength(0);
+    it("scales Defender for Servers Plan 1 by VM count at 'basic'", () => {
+      const inv = [mkVm("v1"), mkVm("v2"), mkVm("v3")];
+      const lines = buildLandingZoneBom("basic", "eastus2", "demo", inv);
+      const servers = lines.find((l) => l.resource.includes("Defender for Servers Plan 1"));
+      expect(servers).toBeDefined();
+      expect(servers!.quantity).toBe(3);
+      expect(servers!.monthlyCost).toBe(15);
+    });
+
+    it("basic ships ONLY Servers P1 from the Defender suite (no CSPM/ARM/Storage/KV CWP)", () => {
+      const lines = buildLandingZoneBom("basic", "eastus2", "demo", [mkVm("v1")]);
+      expect(lines.find((l) => l.resource.includes("Defender CSPM"))).toBeUndefined();
+      expect(lines.find((l) => l.resource.includes("Defender for Resource Manager"))).toBeUndefined();
+      expect(lines.find((l) => l.resource.includes("Defender for Storage"))).toBeUndefined();
+      expect(lines.find((l) => l.resource.includes("Defender for Key Vault"))).toBeUndefined();
     });
 
     it("scales Defender for Servers Plan 1 by VM count at 'standard'", () => {
@@ -124,12 +142,6 @@ describe("buildLandingZoneBom", () => {
       expect(lines.find((l) => l.resource.includes("Defender for Resource Manager"))).toBeDefined();
       expect(lines.find((l) => l.resource.includes("Defender for Storage"))).toBeDefined();
       expect(lines.find((l) => l.resource.includes("Defender for Key Vault"))).toBeDefined();
-    });
-
-    it("drops the free CSPM informational line once paid CSPM is included", () => {
-      const lines = buildLandingZoneBom("standard", "eastus2", "demo", [mkVm("v1")]);
-      const freeCspm = lines.find((l) => l.resource.includes("Defender for Cloud — Free"));
-      expect(freeCspm).toBeUndefined();
     });
 
     it("adds Defender for Containers and App Service only at 'enterprise'", () => {

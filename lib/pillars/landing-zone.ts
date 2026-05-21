@@ -39,8 +39,8 @@ export const LANDING_ZONE_LABELS: Record<LandingZoneTier, string> = {
 
 export const LANDING_ZONE_DESCRIPTIONS: Record<LandingZoneTier, string> = {
   none: "Workload-only estimate. Use when the platform hub is already deployed and billed separately.",
-  basic: "Bastion Basic, Key Vault, Log Analytics (5 GB), Defender for Cloud Foundational CSPM (free), 1× Standard Public IP. Suitable for POC, sandbox, single-subscription dev environments.",
-  standard: "Adds hub-spoke: Azure Firewall Standard, Bastion Standard, VPN Gateway VpnGw1, App Gateway WAF v2, Sentinel PAYG (50 GB), 50 GB Log Analytics, Private DNS zones. Defender CSPM + Defender for Servers P1 + Resource Manager + Storage + Key Vault (CWP) scale with the inventory. Recommended production baseline.",
+  basic: "Standard Public IP, VPN Gateway VpnGw1 (S2S to on-prem), Application Gateway WAF v2, and Defender for Servers Plan 1 scaled by VM count. Minimum hybrid hub for POC / small workload.",
+  standard: "Adds hub-spoke: Azure Bastion Standard, Azure Firewall Standard (+ data processed), Key Vault, Sentinel PAYG (50 GB), 50 GB Log Analytics, Private DNS zones. Defender CSPM + Resource Manager + Storage + Key Vault CWP plans scale with the inventory; Servers stays on Plan 1. Recommended production baseline.",
   enterprise: "Full ALZ: Firewall Premium (replaces Std), ExpressRoute circuit + gateway, DDoS Network Protection, 10× Private Endpoints. Defender for Servers upgrades to P2 (adds agentless scanning, FIM, JIT, free DNS), plus Defender for SQL on Machines (scaled to DB-hosting VMs), Containers, and App Service. Required for regulated / multi-region landings.",
 };
 
@@ -101,58 +101,33 @@ interface LzPresetLine {
 
 const BASIC: LzPresetLine[] = [
   {
-    category: "Landing Zone · Identity",
-    resource: "Microsoft Entra ID — Free tier",
-    sku: "entra-free",
-    monthlyCost: 0, unit: "1/Month", unitPrice: 0, quantity: 1,
-    assumption: "Free directory tier covers SSO + basic IAM for the LZ. Entra ID P1/P2 priced separately when MFA / Conditional Access / PIM is needed.",
-  },
-  {
-    category: "Landing Zone · Management",
-    resource: "Log Analytics workspace — 5 GB/mo ingestion",
-    sku: "log-analytics-pay-as-you-go",
-    monthlyCost: 12, unit: "1/Month", unitPrice: 12, quantity: 1,
-    assumption: "5 GB/mo platform logs at $2.30/GB after the 5 GB free quota → ~$12 with short retention. Scale with workload growth.",
-  },
-  {
-    category: "Landing Zone · Security",
-    resource: "Microsoft Defender for Cloud — Free CSPM",
-    sku: "defender-free",
-    monthlyCost: 0, unit: "1/Month", unitPrice: 0, quantity: 1,
-    assumption: "Free CSPM (security recommendations + secure score) included. Defender Servers/SQL/Storage plans priced per resource elsewhere.",
-  },
-  {
-    category: "Landing Zone · Security",
-    resource: "Azure Key Vault — Standard",
-    sku: "keyvault-std",
-    monthlyCost: 3, unit: "1/Month", unitPrice: 3, quantity: 1,
-    assumption: "Standard vault. ~30k operations/month × $0.03/10k ≈ $0.10; padded to $3 to cover certificate ops and a small managed-HSM allowance.",
-  },
-  {
-    category: "Landing Zone · Networking",
-    resource: "Azure Bastion — Basic",
-    sku: "bastion-basic",
-    monthlyCost: 140, unit: "1 Hour", unitPrice: 0.19, quantity: 730,
-    assumption: "Bastion Basic deployment-hour $0.19 × 730 hrs = $138.70. Single-instance internal RDP/SSH only (no host scaling).",
-  },
-  {
     category: "Landing Zone · Networking",
     resource: "Public IP — Standard × 1",
     sku: "public-ip-std",
     monthlyCost: 4, unit: "1 Hour", unitPrice: 0.005, quantity: 730,
     assumption: "Static Standard Public IP × 1 at $0.005/hr × 730 ≈ $3.65. Outbound IP for the hub.",
   },
+  {
+    category: "Landing Zone · Networking",
+    resource: "VPN Gateway — VpnGw1 (S2S to on-prem)",
+    sku: "vpn-vpngw1",
+    monthlyCost: 140, unit: "1 Hour", unitPrice: 0.19, quantity: 730,
+    assumption: "VpnGw1 ~$0.19/hr × 730 = $138.70. Egress to on-prem extra at $0.035–$0.087/GB (zone-dependent).",
+  },
+  {
+    category: "Landing Zone · Networking",
+    resource: "Application Gateway WAF v2 — small (2 capacity units)",
+    sku: "appgw-waf-v2",
+    monthlyCost: 247, unit: "1 Hour", unitPrice: 0.338, quantity: 730,
+    assumption: "Fixed $0.246/hr × 730 = $180 + 2 capacity units × $0.0144/hr × 730 = $21. Add WAF policy charges for OWASP rule sets.",
+  },
+  // Defender for Servers Plan 1 is added per-VM via buildDefenderLines().
 ];
 
 const STANDARD: LzPresetLine[] = [
-  // Inherits Basic except: Bastion upgrades to Standard, and the
-  // Foundational-CSPM placeholder drops out (paid Defender CSPM
-  // supersedes it via buildDefenderLines).
-  ...BASIC.filter(
-    (l) =>
-      !l.resource.startsWith("Azure Bastion") &&
-      !l.resource.includes("Defender for Cloud — Free"),
-  ),
+  // Inherits Basic (Public IP, VPN Gateway, App Gateway WAF v2) and adds
+  // the production hub-spoke components on top.
+  ...BASIC,
   {
     category: "Landing Zone · Networking",
     resource: "Azure Bastion — Standard",
@@ -176,24 +151,17 @@ const STANDARD: LzPresetLine[] = [
   },
   {
     category: "Landing Zone · Networking",
-    resource: "VPN Gateway — VpnGw1 (S2S to on-prem)",
-    sku: "vpn-vpngw1",
-    monthlyCost: 140, unit: "1 Hour", unitPrice: 0.19, quantity: 730,
-    assumption: "VpnGw1 ~$0.19/hr × 730 = $138.70. Egress to on-prem extra at $0.035–$0.087/GB (zone-dependent).",
-  },
-  {
-    category: "Landing Zone · Networking",
-    resource: "Application Gateway WAF v2 — small (2 capacity units)",
-    sku: "appgw-waf-v2",
-    monthlyCost: 247, unit: "1 Hour", unitPrice: 0.338, quantity: 730,
-    assumption: "Fixed $0.246/hr × 730 = $180 + 2 capacity units × $0.0144/hr × 730 = $21. Add WAF policy charges for OWASP rule sets.",
-  },
-  {
-    category: "Landing Zone · Networking",
     resource: "Private DNS Zones × 5",
     sku: "private-dns",
     monthlyCost: 3, unit: "1/Month", unitPrice: 0.50, quantity: 5,
     assumption: "5 zones × $0.50/zone = $2.50. ~1 M queries/mo at $0.40/M ≈ $0.40. Add zones for each private endpoint family in use.",
+  },
+  {
+    category: "Landing Zone · Security",
+    resource: "Azure Key Vault — Standard",
+    sku: "keyvault-std",
+    monthlyCost: 3, unit: "1/Month", unitPrice: 3, quantity: 1,
+    assumption: "Standard vault for hub-managed secrets / certs / TLS. ~30k operations/month × $0.03/10k ≈ $0.10; padded to $3 for HSM-backed key allowance.",
   },
   {
     category: "Landing Zone · Security",
@@ -204,10 +172,10 @@ const STANDARD: LzPresetLine[] = [
   },
   {
     category: "Landing Zone · Management",
-    resource: "Log Analytics workspace — 50 GB/mo (upgrade)",
+    resource: "Log Analytics workspace — 50 GB/mo",
     sku: "log-analytics-50gb",
     monthlyCost: 115, unit: "1 GB", unitPrice: 2.30, quantity: 50,
-    assumption: "50 GB × $2.30/GB after free quota ≈ $115. Replaces the 5 GB Basic-tier line.",
+    assumption: "50 GB × $2.30/GB after free quota ≈ $115. Standard production retention baseline; scale with workload growth.",
   },
 ];
 
@@ -296,11 +264,38 @@ function buildDefenderLines(
   inventory: InventorySummary,
   tag: string,
 ): BomLine[] {
-  if (tier === "none" || tier === "basic") return [];
+  if (tier === "none") return [];
   const counts = DEFENDER_ASSUMED_COUNTS[tier];
   const { vmCount, sqlVmCount } = inventory;
   const cat = "Landing Zone · Security";
   const lines: LzPresetLine[] = [];
+
+  // Defender for Servers — Plan 1 from Basic upward, Plan 2 at Enterprise.
+  // Per the brief, Basic ships ONLY this CWP plan (no paid CSPM / ARM /
+  // Storage / KV).
+  if (vmCount > 0) {
+    const isP2 = tier === "enterprise";
+    const perVm = isP2 ? DEFENDER_PRICES.serversP2 : DEFENDER_PRICES.serversP1;
+    const planName = isP2 ? "Plan 2 (P2)" : "Plan 1 (P1)";
+    const p2Features = isP2
+      ? "Adds agentless disk scanning, file integrity monitoring, just-in-time VM access, regulatory compliance, free Defender for DNS, and 500 MB Sentinel ingestion benefit. "
+      : "EDR-focused: Defender for Endpoint integration, alerts, software inventory. ";
+    lines.push({
+      category: cat,
+      resource: `Microsoft Defender for Servers ${planName} × ${vmCount} VM${vmCount === 1 ? "" : "s"}`,
+      sku: isP2 ? "defender-servers-p2" : "defender-servers-p1",
+      monthlyCost: vmCount * perVm,
+      unit: "1/Month",
+      unitPrice: perVm,
+      quantity: vmCount,
+      assumption: `$${perVm.toFixed(2)}/VM/mo × ${vmCount} VMs = $${(vmCount * perVm).toFixed(2)}. ${p2Features}Auto-onboards via Defender for Endpoint — no Log Analytics agent required.`,
+    });
+  }
+
+  // The remaining CWP/CSPM plans only kick in at Standard / Enterprise.
+  if (tier === "basic") {
+    return lines.map((l) => presetToBomLine(l, region, appName, tag));
+  }
 
   // CSPM billable resources roughly = VMs + storage accounts + key vaults
   // (the public list is broader but this covers the dominant ones).
@@ -329,26 +324,6 @@ function buildDefenderLines(
     quantity: 1,
     assumption: `Per-subscription plan at $${DEFENDER_PRICES.resourceManager.toFixed(2)}/mo. Detects malicious Resource Manager operations (suspicious ARM template deployments, unusual privilege grants).`,
   });
-
-  // Defender for Servers — Plan 1 at Standard, Plan 2 at Enterprise.
-  if (vmCount > 0) {
-    const isP2 = tier === "enterprise";
-    const perVm = isP2 ? DEFENDER_PRICES.serversP2 : DEFENDER_PRICES.serversP1;
-    const planName = isP2 ? "Plan 2 (P2)" : "Plan 1 (P1)";
-    const p2Features = isP2
-      ? "Adds agentless disk scanning, file integrity monitoring, just-in-time VM access, regulatory compliance, free Defender for DNS, and 500 MB Sentinel ingestion benefit. "
-      : "EDR-focused: Defender for Endpoint integration, alerts, software inventory. ";
-    lines.push({
-      category: cat,
-      resource: `Microsoft Defender for Servers ${planName} × ${vmCount} VM${vmCount === 1 ? "" : "s"}`,
-      sku: isP2 ? "defender-servers-p2" : "defender-servers-p1",
-      monthlyCost: vmCount * perVm,
-      unit: "1/Month",
-      unitPrice: perVm,
-      quantity: vmCount,
-      assumption: `$${perVm.toFixed(2)}/VM/mo × ${vmCount} VMs = $${(vmCount * perVm).toFixed(2)}. ${p2Features}Auto-onboards via Defender for Endpoint — no Log Analytics agent required.`,
-    });
-  }
 
   // Defender for SQL on Machines — only meaningful at Enterprise where the
   // ALZ includes DB workloads under tight regulatory oversight. Counts
