@@ -25,6 +25,12 @@ export interface InventoryItem {
    *  licensing decisions. Pre-filled from the AI's workload hint and
    *  user-editable via the inventory table checkbox in Stage 2. */
   hasDb?: boolean;
+  /** True when this workload needs high availability — pricing
+   *  multiplies the VM compute by 2 and adds a shared Standard Load
+   *  Balancer line in the BOM. The AI sets this when the source doc
+   *  hints at active-active / cluster / failover / load-balanced
+   *  topology; users can override via the Stage 2 checkbox. */
+  hasHa?: boolean;
 }
 
 export interface BomLine {

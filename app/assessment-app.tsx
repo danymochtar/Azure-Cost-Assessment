@@ -376,6 +376,10 @@ export default function AssessmentApp({ user }: { user: string }) {
   const [nonProdPayg, setNonProdPayg] = useState(true);
   const [diskTier, setDiskTier] = useState<"Premium SSD" | "Standard SSD" | "Standard HDD">("Standard SSD");
   const [autoDiskTier, setAutoDiskTier] = useState(true);
+  // BCDR via Azure Site Recovery — opt-in design parameter. When set,
+  // pricing adds protected-instance license + replica disk storage +
+  // cache storage account lines for every VM in the inventory.
+  const [enableBcdr, setEnableBcdr] = useState(false);
   // Safety margin is opt-in. When `applyHeadroom` is false we pass 1.0
   // (exact 1:1 sizing) to the API; only when the checkbox is on does
   // the `headroom` value get used.
@@ -468,6 +472,7 @@ export default function AssessmentApp({ user }: { user: string }) {
         notes: "Manually added",
         disks: [],
         hasDb: false,
+        hasHa: false,
       },
     ]);
   }, []);
@@ -562,6 +567,7 @@ export default function AssessmentApp({ user }: { user: string }) {
     setAppName("");
     setLzCustomize(false);
     setLzComponents(new Set());
+    setEnableBcdr(false);
   }
 
   async function signOut() {
@@ -614,6 +620,7 @@ export default function AssessmentApp({ user }: { user: string }) {
         autoDiskTier: boolean; applyHeadroom: boolean; headroom: number;
         landingZoneTier?: string;
         landingZoneComponents?: string[] | null;
+        enableBcdr?: boolean;
         activePillars: string[]; items: InventoryItem[]; lines: BomLine[];
       } };
       const p = data.project;
@@ -630,6 +637,7 @@ export default function AssessmentApp({ user }: { user: string }) {
       setApplyHeadroom(p.applyHeadroom);
       setHeadroom(p.headroom);
       setLandingZoneTier((p.landingZoneTier as LandingZoneTier | undefined) ?? "none");
+      setEnableBcdr(!!p.enableBcdr);
       if (p.landingZoneComponents && p.landingZoneComponents.length > 0) {
         setLzCustomize(true);
         setLzComponents(new Set(p.landingZoneComponents));
@@ -740,6 +748,7 @@ export default function AssessmentApp({ user }: { user: string }) {
             headroom: applyHeadroom ? headroom : 1.0,
             landingZoneTier,
             landingZoneComponents: lzCustomize ? Array.from(lzComponents) : undefined,
+            enableBcdr,
           },
         }),
       });
@@ -775,6 +784,7 @@ export default function AssessmentApp({ user }: { user: string }) {
           defaultDiskTier: diskTier, autoDiskTier,
           applyHeadroom, headroom, landingZoneTier,
           landingZoneComponents: lzCustomize ? Array.from(lzComponents) : undefined,
+          enableBcdr,
           activePillars: Array.from(activePillars),
           items,
           lines: linesOverride ?? lines,
@@ -1227,6 +1237,13 @@ export default function AssessmentApp({ user }: { user: string }) {
                         content="Tick if this server runs a database (SQL Server, Postgres, MySQL, Oracle, Mongo, etc.). Forces Premium SSD for the disks and signals SQL Server licensing for future pricing passes."
                       />
                     </th>
+                    <th>
+                      HA
+                      <Tooltip
+                        label="High availability"
+                        content="Tick when this workload runs in an HA topology (cluster, active-active, active-passive, load-balanced). Pricing doubles the VM count for HA workloads and adds a shared Standard Load Balancer line. The AI pre-ticks this based on hints in your uploaded doc (e.g. 'cluster', 'failover', 'redundant')."
+                      />
+                    </th>
                     <th />
                   </tr>
                 </thead>
@@ -1308,6 +1325,14 @@ export default function AssessmentApp({ user }: { user: string }) {
                           checked={!!it.hasDb}
                           onChange={(e) => updateItem(idx, { hasDb: e.target.checked })}
                           aria-label="Database server"
+                        />
+                      </td>
+                      <td className="cell-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={!!it.hasHa}
+                          onChange={(e) => updateItem(idx, { hasHa: e.target.checked })}
+                          aria-label="High availability"
                         />
                       </td>
                       <td className="cell-remove">
@@ -1475,6 +1500,14 @@ export default function AssessmentApp({ user }: { user: string }) {
               <Tooltip
                 label="Safety margin"
                 content="Off = exact 1:1 sizing (cost-optimised, default). On = +20% padding on vCPU + memory for bursty workloads. Push higher (up to 1.5) for latency-sensitive prod."
+              />
+            </label>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={enableBcdr} onChange={(e) => setEnableBcdr(e.target.checked)} />
+              <span>BCDR — Azure Site Recovery</span>
+              <Tooltip
+                label="BCDR with Site Recovery"
+                content="Adds Azure Site Recovery (A2A) replication for every VM: protected-instance license ($25/VM/mo), replica disk storage in the target region (~$0.075/GB/mo Standard SSD), and the delta-replication cache storage account (~$1.50/VM/mo). DR-drill compute is excluded."
               />
             </label>
             {applyHeadroom && (

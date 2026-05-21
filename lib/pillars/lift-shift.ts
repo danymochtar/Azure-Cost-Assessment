@@ -68,6 +68,10 @@ export async function buildLiftShiftBom(
     string,
     { meta: VmGroupKey; count: number; sample: InventoryItem; vcpu: number; memoryGb: number }
   >();
+  // Each HA-flagged VM expands to 2 instances at compute time so the
+  // BOM reflects the active/standby (or active/active) pair the AI
+  // detected. Disks stay 1:1 — the replica is the same logical disk.
+  let haPairCount = 0;
   for (const item of items) {
     const sku = recommendVm(item, opts.headroom, 2, opts.computeMode);
     const billing = billingForVm(item, opts.pricingMode, opts.nonProdPayg);
@@ -81,11 +85,13 @@ export async function buildLiftShiftBom(
       ahb,
     };
     const k = groupKey(meta);
+    const haUnits = item.hasHa ? 2 : 1;
+    if (item.hasHa) haPairCount += 1;
     const existing = groups.get(k);
     if (existing) {
-      existing.count += 1;
+      existing.count += haUnits;
     } else {
-      groups.set(k, { meta, count: 1, sample: item, vcpu: sku.vcpu, memoryGb: sku.memoryGb });
+      groups.set(k, { meta, count: haUnits, sample: item, vcpu: sku.vcpu, memoryGb: sku.memoryGb });
     }
   }
 
@@ -186,6 +192,32 @@ export async function buildLiftShiftBom(
 
   // SQL Server license line (per VM) — quick approximation: $73/vCPU/mo Std for AHB-less prod SQL.
   // Skipped because reliable per-core licensing requires entitlement context; flagged as TODO.
+
+  // One Standard Load Balancer line covers all HA pairs. Real deployments
+  // often run multiple LBs per tier (web/app/db) but a single shared
+  // baseline is enough for cost-order-of-magnitude visibility.
+  if (haPairCount > 0) {
+    const monthly = 18.25 + 3.65; // 5 rules + data processed ~50 GB/mo @ $0.005/GB
+    lines.push({
+      ...emptyBomLine(),
+      category: "Networking",
+      resource: `Standard Load Balancer (HA front-end for ${haPairCount} workload${haPairCount === 1 ? "" : "s"})`,
+      sku: "lb-standard",
+      meter: "lb-standard",
+      region: opts.region,
+      quantity: 1,
+      unit: "1/Month",
+      unitPrice: monthly,
+      monthlyCost: Math.round(monthly * 100) / 100,
+      currency: "USD",
+      source: "lz-baseline",
+      serviceName: "Load Balancer",
+      customName: opts.appName ? `${opts.appName}-lb` : "Load Balancer",
+      resourceCount: 1,
+      billingTerm: "PAYG",
+      assumption: `Standard LB ~$18.25/mo (5 rules) + ~$3.65/mo data processed (50 GB × $0.005/GB). Hosts the active/standby (or active/active) front-end for ${haPairCount} HA-flagged workload(s).`,
+    });
+  }
 
   return { lines, vmCount: items.length, totalStorageGb };
 }
