@@ -43,6 +43,7 @@ model Project {
   autoDiskTier    Boolean  @map("auto_disk_tier")
   applyHeadroom   Boolean  @map("apply_headroom")
   headroom        Float
+  landingZoneTier String   @default("none") @map("landing_zone_tier")
   activePillars   Json     @default("[]") @map("active_pillars")
   items           Json     @default("[]")
   lines           Json     @default("[]")

@@ -1,0 +1,61 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildLandingZoneBom,
+  LANDING_ZONE_LABELS,
+  type LandingZoneTier,
+} from "@/lib/pillars/landing-zone";
+
+describe("buildLandingZoneBom", () => {
+  it("returns no lines when tier is 'none'", () => {
+    expect(buildLandingZoneBom("none", "eastus2", "demo")).toEqual([]);
+  });
+
+  it("returns more lines as tier escalates", () => {
+    const basic = buildLandingZoneBom("basic", "eastus2", "demo");
+    const standard = buildLandingZoneBom("standard", "eastus2", "demo");
+    const enterprise = buildLandingZoneBom("enterprise", "eastus2", "demo");
+    expect(basic.length).toBeGreaterThan(0);
+    expect(standard.length).toBeGreaterThan(basic.length);
+    expect(enterprise.length).toBeGreaterThan(standard.length);
+  });
+
+  it("rolls up to a higher monthly total at higher tiers", () => {
+    const sum = (tier: LandingZoneTier) =>
+      buildLandingZoneBom(tier, "eastus2", "demo").reduce((s, l) => s + l.monthlyCost, 0);
+    expect(sum("standard")).toBeGreaterThan(sum("basic"));
+    expect(sum("enterprise")).toBeGreaterThan(sum("standard"));
+  });
+
+  it("standard replaces Bastion Basic with Bastion Standard", () => {
+    const lines = buildLandingZoneBom("standard", "eastus2", "demo");
+    const bastion = lines.filter((l) => l.resource.startsWith("Azure Bastion"));
+    expect(bastion).toHaveLength(1);
+    expect(bastion[0].resource).toContain("Standard");
+  });
+
+  it("enterprise replaces Firewall Standard with Premium", () => {
+    const lines = buildLandingZoneBom("enterprise", "eastus2", "demo");
+    const fwDeploy = lines.filter(
+      (l) => l.resource.startsWith("Azure Firewall —") && l.resource.includes("deployment"),
+    );
+    expect(fwDeploy).toHaveLength(1);
+    expect(fwDeploy[0].resource).toContain("Premium");
+  });
+
+  it("tags lines with the app name and region", () => {
+    const lines = buildLandingZoneBom("basic", "westeurope", "ERPSuite");
+    for (const l of lines) {
+      expect(l.region).toBe("westeurope");
+      expect(l.customName).toBe("ERPSuite-LZ");
+      expect(l.source).toBe("lz-baseline");
+      expect(l.category.startsWith("Landing Zone")).toBe(true);
+    }
+  });
+
+  it("exposes a label for every tier in the public type", () => {
+    const tiers: LandingZoneTier[] = ["none", "basic", "standard", "enterprise"];
+    for (const t of tiers) {
+      expect(LANDING_ZONE_LABELS[t]).toBeTruthy();
+    }
+  });
+});

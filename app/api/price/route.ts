@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { buildLiftShiftBom, type LiftShiftOptions } from "@/lib/pillars/lift-shift";
+import { buildLandingZoneBom, type LandingZoneTier } from "@/lib/pillars/landing-zone";
 import type { InventoryItem } from "@/lib/models";
 import { RetailPricesClient } from "@/lib/pricing/retail";
 
@@ -38,6 +39,7 @@ const OptionsSchema = z.object({
   autoDiskTier: z.boolean(),
   appName: z.string(),
   headroom: z.number().min(1.0).max(2.0),
+  landingZoneTier: z.enum(["none", "basic", "standard", "enterprise"]).default("none"),
 });
 
 const BodySchema = z.object({
@@ -49,11 +51,17 @@ export async function POST(req: Request) {
   try {
     const body = BodySchema.parse(await req.json());
     const client = new RetailPricesClient("USD");
-    const { lines } = await buildLiftShiftBom(
+    const { lines: workloadLines } = await buildLiftShiftBom(
       body.items as InventoryItem[],
       body.options as LiftShiftOptions,
       client,
     );
+    const lzLines = buildLandingZoneBom(
+      body.options.landingZoneTier as LandingZoneTier,
+      body.options.region,
+      body.options.appName,
+    );
+    const lines = [...lzLines, ...workloadLines];
 
     const warnings: string[] = [];
     if (client.fallbacksUsed.size > 0) {
