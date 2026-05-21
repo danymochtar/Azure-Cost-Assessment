@@ -6,6 +6,7 @@ import {
   buildLandingZoneBomFromComponents,
   type LandingZoneTier,
 } from "@/lib/pillars/landing-zone";
+import { buildBcdrBom } from "@/lib/pillars/bcdr";
 import type { InventoryItem, Notice } from "@/lib/models";
 import { RetailPricesClient } from "@/lib/pricing/retail";
 
@@ -31,6 +32,7 @@ const ItemSchema = z.object({
   workload: z.string().optional(),
   recommendedAzureService: z.string().optional(),
   hasDb: z.boolean().optional(),
+  hasHa: z.boolean().optional(),
 });
 
 const OptionsSchema = z.object({
@@ -44,6 +46,7 @@ const OptionsSchema = z.object({
   appName: z.string(),
   headroom: z.number().min(1.0).max(2.0),
   landingZoneTier: z.enum(["none", "basic", "standard", "enterprise"]).default("none"),
+  enableBcdr: z.boolean().default(false),
   // When `landingZoneComponents` is present (length > 0) the route uses
   // the explicit id list instead of the tier preset — that's how the
   // "Customize components" UI surfaces its picks.
@@ -91,7 +94,13 @@ export async function POST(req: Request) {
           body.items as InventoryItem[],
           body.options.landingZoneParams,
         );
-    const lines = [...lzLines, ...workloadLines];
+    const bcdrLines = body.options.enableBcdr
+      ? buildBcdrBom(body.items as InventoryItem[], {
+          region: body.options.region,
+          appName: body.options.appName,
+        })
+      : [];
+    const lines = [...lzLines, ...workloadLines, ...bcdrLines];
 
     const notices: Notice[] = [];
     if (client.fallbacksUsed.size > 0) {

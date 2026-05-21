@@ -44,6 +44,7 @@ Conversion rules:
 - environment: 'prod' unless name/tag implies dev/test/uat/staging/sit/qa/preprod/sandbox.
 - powerstate: 'poweredOn' / 'poweredOff' / 'unknown'.
 - workload: best-guess role — 'sql' | 'web' | 'app' | 'cache' | 'queue' | 'file' | 'ad' | 'general'.
+- needs_ha: TRUE when the source document indicates this workload should run in a high-availability topology. Look for phrases like 'active-active', 'active-passive', 'active/standby', 'cluster', 'failover', 'load balanced', 'redundant', 'HA pair', 'primary/secondary', 'highly available', or naming conventions like '-ha-', '-prim-', '-sec-', '-node1/node2'. Defaults to FALSE if not indicated.
 
 Do NOT invent VMs. Do NOT skip VMs. If a VM has missing fields, set the field to a sensible default and mention it in 'notes'.
 
@@ -67,6 +68,7 @@ const ItemSchema = z.object({
   workload: z.string().default("general"),
   recommended_azure_service: z.string().default("Azure Virtual Machine"),
   notes: z.string().default(""),
+  needs_ha: z.boolean().default(false),
 });
 
 const ExtractionSchema = z.object({
@@ -104,6 +106,7 @@ const TOOL_INPUT_SCHEMA = {
           workload: { type: "string" },
           recommended_azure_service: { type: "string" },
           notes: { type: "string" },
+          needs_ha: { type: "boolean", description: "True when the source doc indicates this workload runs in an HA topology (cluster, active-active, active-passive, load-balanced, redundant, failover)." },
         },
         required: ["name", "vcpu", "memory_gb", "storage_gb"],
       },
@@ -174,6 +177,17 @@ function detectDb(workload: string | undefined, name: string, notes: string): bo
   return DB_HINT_RE.test(hay);
 }
 
+// Heuristics for the AI's needs_ha output. Catches the obvious naming
+// patterns even when the model forgot to set the flag.
+const HA_HINT_RE =
+  /\b(active[-\s\/]?active|active[-\s\/]?passive|active[-\s\/]?standby|cluster(?:ed|ing)?|failover|loadbalanc|load[-\s]?balanc|redundan|h[\W_]?a[\W_]|highly\s*available|high\s*availability|primary[-\s]?secondary|hot[-\s]?(?:standby|spare))\b/i;
+
+function detectHa(modelFlag: boolean, name: string, notes: string, workload: string): boolean {
+  if (modelFlag) return true;
+  const hay = `${name} ${notes} ${workload}`;
+  return HA_HINT_RE.test(hay);
+}
+
 function mapItems(parsed: z.infer<typeof ExtractionSchema>): InventoryItem[] {
   return parsed.items.map((i) => {
     const disks: DiskItem[] = i.disks.map((d) => ({
@@ -194,6 +208,7 @@ function mapItems(parsed: z.infer<typeof ExtractionSchema>): InventoryItem[] {
       workload: i.workload,
       recommendedAzureService: i.recommended_azure_service,
       hasDb: detectDb(i.workload, i.name, i.notes),
+      hasHa: detectHa(i.needs_ha, i.name, i.notes, i.workload),
     };
   });
 }
