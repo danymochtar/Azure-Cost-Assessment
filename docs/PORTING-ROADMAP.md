@@ -87,6 +87,14 @@ CAF landing-zone composer. The TypeScript port currently delivers
   WAF capacity units, Firewall data-processed GB, NAT data GB
 - Preset auto-tick rules (`LZ_PRESETS`)
 
+**UX rule for the port:** Each component is a checkbox. Quantity inputs
+attached to a component (Backup %, LA MB/day/VM, bandwidth GB, WAF CUs,
+firewall data GB, NAT data GB, etc.) **only render when the parent
+checkbox is ticked** — same pattern as the Safety margin reveal in
+Phase 2. Use the `.reveal-field` class in `app/globals.css` and the
+`<Tooltip>` component for the help text. No silently-displayed "enter
+0 to disable" number inputs.
+
 ### HA / BCDR
 
 - 2x compute multiplier + Standard Load Balancer for HA

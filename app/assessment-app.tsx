@@ -58,7 +58,11 @@ export default function AssessmentApp({ user }: { user: string }) {
   const [nonProdPayg, setNonProdPayg] = useState(true);
   const [diskTier, setDiskTier] = useState<"Premium SSD" | "Standard SSD" | "Standard HDD">("Standard SSD");
   const [autoDiskTier, setAutoDiskTier] = useState(true);
-  const [headroom, setHeadroom] = useState(1.0);
+  // Safety margin is opt-in. When `applyHeadroom` is false we pass 1.0
+  // (exact 1:1 sizing) to the API; only when the checkbox is on does
+  // the `headroom` value get used.
+  const [applyHeadroom, setApplyHeadroom] = useState(false);
+  const [headroom, setHeadroom] = useState(1.2);
 
   const [profile, setProfile] = useState<AssessmentProfile | null>(null);
   const [perFile, setPerFile] = useState<PerFile[]>([]);
@@ -175,7 +179,8 @@ export default function AssessmentApp({ user }: { user: string }) {
           items,
           options: {
             region, pricingMode, computeMode, useAhbWindows, nonProdPayg,
-            defaultDiskTier: diskTier, autoDiskTier, appName, headroom,
+            defaultDiskTier: diskTier, autoDiskTier, appName,
+            headroom: applyHeadroom ? headroom : 1.0,
           },
         }),
       });
@@ -518,7 +523,7 @@ export default function AssessmentApp({ user }: { user: string }) {
           </div>
         </div>
 
-        <div className="row cols-3" style={{ marginTop: "1rem" }}>
+        <div className="row" style={{ marginTop: "1rem" }}>
           <div className="field">
             <label className="field-label" htmlFor="diskTier">
               Default disk tier
@@ -532,16 +537,6 @@ export default function AssessmentApp({ user }: { user: string }) {
               <option value="Standard SSD">Standard SSD (recommended)</option>
               <option value="Standard HDD">Standard HDD</option>
             </select>
-          </div>
-          <div className="field">
-            <label className="field-label" htmlFor="headroom">
-              Safety margin
-              <Tooltip
-                label="Safety margin"
-                content="Multiplier on vCPU + memory. 1.0 = exact 1:1 sizing (cost-optimised). 1.2 = +20% headroom for bursty workloads. 1.5 = +50% for latency-sensitive prod."
-              />
-            </label>
-            <input id="headroom" type="number" min={1.0} max={2.0} step={0.05} value={headroom} onChange={(e) => setHeadroom(Number(e.target.value))} />
           </div>
           <div className="col col-stack">
             <label className="checkbox-row">
@@ -568,6 +563,28 @@ export default function AssessmentApp({ user }: { user: string }) {
                 content="Detects UAT / dev / test / staging / sandbox by name and keeps those VMs on Pay-as-you-go even when the global billing term is RI or SP."
               />
             </label>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={applyHeadroom} onChange={(e) => setApplyHeadroom(e.target.checked)} />
+              <span>Apply safety margin (capacity headroom)</span>
+              <Tooltip
+                label="Safety margin"
+                content="Off = exact 1:1 sizing (cost-optimised, default). On = +20% padding on vCPU + memory for bursty workloads. Push higher (up to 1.5) for latency-sensitive prod."
+              />
+            </label>
+            {applyHeadroom && (
+              <div className="reveal-field">
+                <label className="field-label" htmlFor="headroom">Multiplier</label>
+                <input
+                  id="headroom"
+                  type="number"
+                  min={1.05}
+                  max={2.0}
+                  step={0.05}
+                  value={headroom}
+                  onChange={(e) => setHeadroom(Number(e.target.value))}
+                />
+              </div>
+            )}
           </div>
         </div>
 
