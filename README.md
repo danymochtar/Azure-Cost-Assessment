@@ -60,8 +60,12 @@ Open http://localhost:3000 → redirects to `/login` until you sign in.
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Claude classifier + extractor | — (required) |
 | `BETTER_AUTH_SECRET` | HMAC key for both the session cookie and the per-browser account-record cookie. **Rotate to invalidate every account + session.** | — (required, ≥16 chars) |
-| `APP_USER` | Bootstrap admin username (env-var fallback) | `admin` |
-| `APP_PASSWORD` | Bootstrap admin password | falls back to `BETTER_AUTH_SECRET` |
+| `APP_USER` | Bootstrap admin username (optional override) | `admin` |
+| `APP_PASSWORD` | Bootstrap admin password (optional override) | `noventiq` |
+
+The bootstrap admin works out of the box as `admin` / `noventiq` — no
+env-var configuration needed. Override with `APP_USER` / `APP_PASSWORD`
+when you deploy to a public URL.
 
 No database. No Redis. No external storage. Two cookies do all the work:
 

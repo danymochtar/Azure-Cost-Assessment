@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   constantTimeEqualStr,
   createSessionCookie,
+  getCredentials,
   verifySessionCookie,
 } from "@/lib/auth";
 
@@ -73,5 +74,34 @@ describe("constantTimeEqualStr", () => {
   });
   it("returns false for strings of different lengths (no length leak)", () => {
     expect(constantTimeEqualStr("admin", "administrator")).toBe(false);
+  });
+});
+
+describe("getCredentials defaults", () => {
+  const originalUser = process.env.APP_USER;
+  const originalPw = process.env.APP_PASSWORD;
+  beforeEach(() => {
+    delete process.env.APP_USER;
+    delete process.env.APP_PASSWORD;
+  });
+  afterEach(() => {
+    process.env.APP_USER = originalUser;
+    process.env.APP_PASSWORD = originalPw;
+  });
+
+  it("defaults to admin/noventiq with no env vars set", () => {
+    const creds = getCredentials();
+    expect(creds.user).toBe("admin");
+    expect(creds.password).toBe("noventiq");
+  });
+
+  it("APP_USER overrides the default username", () => {
+    process.env.APP_USER = "dany";
+    expect(getCredentials().user).toBe("dany");
+  });
+
+  it("APP_PASSWORD overrides the default password", () => {
+    process.env.APP_PASSWORD = "different-password";
+    expect(getCredentials().password).toBe("different-password");
   });
 });

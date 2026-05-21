@@ -85,15 +85,16 @@ export function verifySessionCookie(raw: string | undefined | null): SessionPayl
   }
 }
 
+// Built-in bootstrap admin. Lets the deploy login as `admin` / `noventiq`
+// with zero env-var configuration. Override either field by setting
+// `APP_USER` / `APP_PASSWORD` in the deployment env — useful if you want
+// a different password (and you should, for any public URL).
+const DEFAULT_ADMIN_USER = "admin";
+const DEFAULT_ADMIN_PASSWORD = "noventiq";
+
 export function getCredentials(): { user: string; password: string } {
-  const user = process.env.APP_USER?.trim() || "admin";
-  // APP_PASSWORD falls back to the signing secret so a single env var
-  // works for quick personal deployments. Set APP_PASSWORD explicitly
-  // before shipping to any public URL.
-  const password = process.env.APP_PASSWORD?.trim() || process.env.BETTER_AUTH_SECRET?.trim();
-  if (!password) {
-    throw new Error("APP_PASSWORD (or BETTER_AUTH_SECRET as fallback) must be set.");
-  }
+  const user = process.env.APP_USER?.trim() || DEFAULT_ADMIN_USER;
+  const password = process.env.APP_PASSWORD?.trim() || DEFAULT_ADMIN_PASSWORD;
   return { user, password };
 }
 
