@@ -547,6 +547,11 @@ export default function AssessmentApp({ user }: { user: string }) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [files, setFiles] = useState<UploadedFile[]>([]);
+  // Source-file metadata persisted from previous sessions. We can't
+  // store binary uploads in the DB cheaply, so the recall is name +
+  // size only — surfaced in Stage 1 so the user remembers what they
+  // originally fed in.
+  const [loadedFileMeta, setLoadedFileMeta] = useState<Array<{ name: string; sizeBytes: number }>>([]);
   const [pastedText, setPastedText] = useState("");
   const [customer, setCustomer] = useState("");
   const [appName, setAppName] = useState("");
@@ -666,7 +671,10 @@ export default function AssessmentApp({ user }: { user: string }) {
   // analyzed, snap the whole page back to a clean Stage 1 — Stage 2/3/4
   // should not linger with stale classification or BOM data.
   useEffect(() => {
-    const empty = files.length === 0 && !pastedText.trim();
+    const empty =
+      files.length === 0 &&
+      !pastedText.trim() &&
+      loadedFileMeta.length === 0;
     if (empty && (stage1Confirmed || stage2Confirmed || items.length > 0 || lines.length > 0)) {
       setStage1Confirmed(false);
       setStage2Confirmed(false);
@@ -680,7 +688,7 @@ export default function AssessmentApp({ user }: { user: string }) {
       setNotices([]);
       setAiUsage(emptyUsage());
     }
-  }, [files.length, pastedText, stage1Confirmed, stage2Confirmed, items.length, lines.length]);
+  }, [files.length, pastedText, loadedFileMeta.length, stage1Confirmed, stage2Confirmed, items.length, lines.length]);
 
   // Claude-chat-style paste: anywhere on the page, paste an image, file,
   // or text from the clipboard. Files / images land in the file list;
@@ -754,6 +762,7 @@ export default function AssessmentApp({ user }: { user: string }) {
     setLzComponents(new Set());
     setEnableBcdr(false);
     setPillarParams({});
+    setLoadedFileMeta([]);
   }
 
   async function signOut() {
@@ -808,12 +817,18 @@ export default function AssessmentApp({ user }: { user: string }) {
         landingZoneComponents?: string[] | null;
         enableBcdr?: boolean;
         pillarParams?: Record<string, Record<string, unknown>> | null;
+        pastedText?: string | null;
+        sourceFiles?: Array<{ name: string; sizeBytes: number }> | null;
+        profile?: AssessmentProfile | null;
         activePillars: string[]; items: InventoryItem[]; lines: BomLine[];
       } };
       const p = data.project;
       setCurrentProjectId(id);
       setCustomer(p.customer ?? "");
       setAppName(p.name);
+      setPastedText(p.pastedText ?? "");
+      setLoadedFileMeta(p.sourceFiles ?? []);
+      setProfile(p.profile ?? null);
       setRegion(p.region);
       setPricingMode(p.pricingMode as PricingMode);
       setComputeMode(p.computeMode as ComputeMode);
@@ -976,6 +991,16 @@ export default function AssessmentApp({ user }: { user: string }) {
           landingZoneComponents: lzCustomize ? Array.from(lzComponents) : undefined,
           enableBcdr,
           pillarParams,
+          pastedText: pastedText || undefined,
+          sourceFiles: [
+            // Currently-uploaded files in this session take precedence;
+            // fall back to the previously-loaded metadata so re-saves
+            // don't drop the original list.
+            ...(files.length > 0
+              ? files.map((f) => ({ name: f.file.name, sizeBytes: f.file.size }))
+              : loadedFileMeta),
+          ],
+          profile,
           activePillars: Array.from(activePillars),
           items,
           lines: linesOverride ?? lines,
@@ -1064,39 +1089,11 @@ export default function AssessmentApp({ user }: { user: string }) {
         Upload your workload. Pick your Azure design. Get a live cost estimate.
       </p>
 
-      {savedProjects.length > 0 && (
-        <div className="saved-projects-bar">
-          <span className="saved-projects-label">
-            <FolderOpen size={14} /> Saved projects
-          </span>
-          <div className="saved-projects-list">
-            {savedProjects.map((p) => {
-              const label = p.customer ? `${p.customer} · ${p.name}` : p.name;
-              return (
-                <span key={p.id} className="saved-project-pill">
-                  <button
-                    type="button"
-                    className="saved-project-load"
-                    title={`Load "${label}" — last updated ${new Date(p.updatedAt).toLocaleString()}`}
-                    onClick={() => void loadProject(p.id)}
-                  >
-                    {label}
-                  </button>
-                  <button
-                    type="button"
-                    className="saved-project-del"
-                    title="Delete"
-                    aria-label={`Delete ${label}`}
-                    onClick={() => void deleteProject(p.id, label)}
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </span>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* The saved-projects pill bar has moved to the /projects recap
+          page (folder icon in the top bar). Keeping it off the home
+          page reduces clutter once a user accrues more than a couple
+          of saved assessments. */}
+
 
       {savedToast && (
         <div className="banner success" role="status">
@@ -1178,6 +1175,20 @@ export default function AssessmentApp({ user }: { user: string }) {
           onChange={(e) => onSelectFiles(e.target.files)}
         />
 
+        {files.length === 0 && loadedFileMeta.length > 0 && (
+          <div className="file-list" aria-label="Previously uploaded files">
+            <p className="helper" style={{ margin: "0 0 0.4rem" }}>
+              <strong>From this saved project</strong> — bytes aren&apos;t stored; re-upload if you want to redo extraction.
+            </p>
+            {loadedFileMeta.map((f, i) => (
+              <div className="file-row" key={`${f.name}-${i}`} style={{ opacity: 0.7 }}>
+                <FileText size={16} className="icon" />
+                <span className="name">{f.name}</span>
+                <span className="size">{(f.sizeBytes / 1024).toFixed(1)} KB</span>
+              </div>
+            ))}
+          </div>
+        )}
         {files.length > 0 && (
           <div className="file-list">
             {files.map((f, i) => (
