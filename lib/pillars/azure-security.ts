@@ -58,10 +58,13 @@ export function buildAzureSecurityBom(
   if (entra !== "off" && entraUsers > 0) {
     const t = ENTRA_USER_RATE[entra];
     const cost = t.rate * entraUsers;
+    const entraFit = entra === "p2"
+      ? "P2 — required for PIM (just-in-time privileged access), Identity Protection (risk-based Conditional Access), Access Reviews. License only the users who need PIM/IP — usually admins + privileged developers, not the whole tenant."
+      : "P1 — Conditional Access, SSPR, group-based licence assignment, Cloud App Discovery. Sufficient for most knowledge workers; step up to P2 only for privileged accounts that need PIM.";
     push(
       `Microsoft Entra ID ${t.label} — ${entraUsers} users`, `entra-${entra}`,
       cost, "1/Month", t.rate, entraUsers,
-      `$${t.rate.toFixed(2)}/user/mo × ${entraUsers} users. ${entra === "p2" ? "Includes Conditional Access, PIM, Identity Protection." : "Conditional Access + SSPR; PIM requires P2."}`,
+      `$${t.rate.toFixed(2)}/user/mo × ${entraUsers} users = $${cost.toFixed(2)}. Picked because ${entraFit} Common pattern: P2 for ~10 % of users (admins, devs), P1 for the rest, free tier for guests. What's NOT included: Entra ID External Identities (per-MAU pricing), Entra ID Governance (separate licence for entitlement management / lifecycle workflows), Defender for Identity.`,
     );
   }
   if (purviewCu > 0) {
@@ -69,7 +72,7 @@ export function buildAzureSecurityBom(
     push(
       `Microsoft Purview — Data Map (${purviewCu} capacity unit${purviewCu === 1 ? "" : "s"})`, "purview-capacity-unit",
       cost, "1 Hour", 0.563, 730 * purviewCu,
-      `${purviewCu} × $0.563/hr × 730. Add per-asset metadata scan charges (~$1 per 1M scanned).`,
+      `${purviewCu} × $0.563/hr × 730 = $${cost.toFixed(2)}. Picked because 1 capacity unit = ~25 concurrent operations + ~10k assets in active catalog. Step up by 1 CU per ~25k additional assets. Pause the capacity off-hours to halve the bill — Purview supports stop/start without losing the catalog. What's NOT included: per-asset metadata scans (~$1/M assets scanned), data-quality rule executions, Insights workspaces, Data Estate Insights (separate SKU).`,
     );
   }
   if (wafCount > 0) {
@@ -77,7 +80,7 @@ export function buildAzureSecurityBom(
     push(
       `Azure Web Application Firewall — ${wafCount} polic${wafCount === 1 ? "y" : "ies"}`, "waf-policy",
       cost, "1/Month", 18, wafCount,
-      `WAF policies with OWASP managed rule set. Attaches to Front Door / App Gateway; the deployment cost lives on those services.`,
+      `WAF policies with OWASP managed rule set: ${wafCount} × $18/mo = $${cost.toFixed(2)}. Picked Standard WAF policy because the OWASP managed rule set covers the OWASP Top 10 without custom maintenance. Attach to Front Door (global, edge-blocked early) for public-facing ingress; attach to App Gateway (per-app, behind your VNet) for east-west or per-app rule sets. The compute cost lives on the gateway itself — this line is just the policy. What's NOT included: per-rule custom WAF (Premium tiers), bot management add-on, geo-block rule executions over the free quota.`,
     );
   }
   if (peCount > 0) {
@@ -85,7 +88,7 @@ export function buildAzureSecurityBom(
     push(
       `Private Link — ${peCount} private endpoint${peCount === 1 ? "" : "s"}`, "private-link",
       cost, "1 Hour", 0.01, 730 * peCount,
-      `${peCount} endpoints × $0.01/hr × 730 + ~$0.01/GB data processed (excluded).`,
+      `${peCount} endpoints × $0.01/hr × 730 = $${cost.toFixed(2)}. Picked because private endpoints are mandatory for PCI / HIPAA / regulated compliance regimes — they remove public-internet exposure from PaaS services. Step down (use service endpoints + NSG instead) if compliance allows; service endpoints are free but only filter at the subnet level, not the resource. What's NOT included: data processed (~$0.01/GB inbound + outbound), Private DNS Zone hosting ($0.50/zone), Private Link Service (separate SKU for publishing your own services).`,
     );
   }
   return lines;

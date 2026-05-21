@@ -39,6 +39,8 @@ const ItemSchema = z.object({
   recommendedAzureService: z.string().optional(),
   hasDb: z.boolean().optional(),
   hasHa: z.boolean().optional(),
+  sizingRationale: z.string().optional(),
+  serviceRationale: z.string().optional(),
 });
 
 const OptionsSchema = z.object({

@@ -28,6 +28,7 @@ Rules:
 2. needs_vm_extraction=true ONLY when the file contains per-VM rows that justify running the expensive Sonnet extractor.
 3. signals — short phrases quoting evidence ("column 'SIEM EPS'", "sheet 'Model Inventory'", "mentions 'RAG pipeline'").
 4. Keep summary to one short sentence.
+5. reasoning — 1–2 sentences a customer architect could defend to a stakeholder. Tie the evidence in 'signals' to why this pillar fits AND why the other pillars don't (e.g. "Per-VM specs with powerstate and provisioned MiB columns match the lift-and-shift fingerprint; no PaaS or modernization signals like 'AKS', 'App Service', or 'containerize'."). Keep it under 240 characters.
 
 You MUST respond by calling the 'submit_classification' tool with the result.`;
 
@@ -49,6 +50,7 @@ const ClassificationSchema = z.object({
   suggested_components: z.array(z.string()).default([]),
   signals: z.array(z.string()).default([]),
   summary: z.string().default(""),
+  reasoning: z.string().default(""),
 });
 
 const TOOL_INPUT_SCHEMA = {
@@ -69,6 +71,7 @@ const TOOL_INPUT_SCHEMA = {
     suggested_components: { type: "array", items: { type: "string" } },
     signals: { type: "array", items: { type: "string" } },
     summary: { type: "string", description: "One short sentence summary." },
+    reasoning: { type: "string", description: "1-2 sentences a customer architect could defend: why this pillar fits AND why the others don't. <240 chars." },
   },
   required: ["workload_type", "confidence"],
 };
@@ -136,6 +139,7 @@ export async function classify(
     suggestedComponents: parsed.suggested_components,
     signals: parsed.signals,
     summary: parsed.summary,
+    reasoning: parsed.reasoning,
   };
 }
 
@@ -190,6 +194,7 @@ export async function classifyMany(
       suggestedComponents: [],
       signals: [],
       summary: "All files failed to classify or returned 'unknown'.",
+      reasoning: "No file in the upload set produced a confident pillar match. Re-upload a richer source (RVTools export, spec sheet, architecture diagram) so the classifier has signals to anchor on.",
     };
   }
 

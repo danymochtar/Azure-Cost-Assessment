@@ -3,6 +3,8 @@ import { type BomLine, emptyBomLine, type ComputeMode, type InventoryItem, type 
 import { pickBySubstring } from "../pricing/picker";
 import { RetailPricesClient } from "../pricing/retail";
 import {
+  explainDiskTierChoice,
+  explainVmChoice,
   isNonProd,
   isSqlServer,
   osIsWindows,
@@ -72,6 +74,7 @@ export async function buildLiftShiftBom(
       meta: VmGroupKey;
       count: number;
       sample: InventoryItem;
+      sku: ReturnType<typeof recommendVm>;
       vcpu: number;
       memoryGb: number;
       names: string[];
@@ -108,7 +111,7 @@ export async function buildLiftShiftBom(
       if (item.hasHa) existing.haNames.push(item.name);
     } else {
       groups.set(k, {
-        meta, count: haUnits, sample: item, vcpu: sku.vcpu, memoryGb: sku.memoryGb,
+        meta, count: haUnits, sample: item, sku, vcpu: sku.vcpu, memoryGb: sku.memoryGb,
         names: [item.name],
         haNames: item.hasHa ? [item.name] : [],
       });
@@ -163,13 +166,15 @@ export async function buildLiftShiftBom(
         ? [...g.names.filter((n) => !g.haNames.includes(n)), ...g.haNames.map((n) => `${n} (HA pair)`)]
         : g.names,
       assumption: rec
-        ? `${g.count} x ${perHour.toFixed(4)}/hr x 730 hrs = ${groupMonthly.toFixed(2)}` +
-          (g.meta.ahb ? " (AHB: priced as Linux)" : "") +
+        ? `${g.count} × ${perHour.toFixed(4)}/hr × 730 hrs = ${groupMonthly.toFixed(2)}.` +
+          ` Picked because ${explainVmChoice(g.sample, g.sku)}` +
+          ` What's NOT included: SQL Server / Windows licensing extras, B-series CPU credit overage, storage (priced separately on Managed Disks lines).` +
+          (g.meta.ahb ? " AHB applied — priced as Linux." : "") +
           (g.meta.env === "non-prod" && opts.nonProdPayg && opts.pricingMode !== "payg"
-            ? " (non-prod kept on PAYG)"
+            ? " Non-prod kept on PAYG even though the global billing term is reserved."
             : "") +
           (fellBackToPayg
-            ? ` (${billingTermLabel(g.meta.billing)} not offered for this SKU in ${opts.region} — priced at PAYG)`
+            ? ` ${billingTermLabel(g.meta.billing)} not offered for this SKU in ${opts.region} — priced at PAYG.`
             : "")
         : `No retail meter found in region ${opts.region}. Line priced at $0.`,
     };
@@ -212,7 +217,7 @@ export async function buildLiftShiftBom(
         resourceCount: 1,
         billingTerm: "PAYG",
         workloadNames: [item.name],
-        assumption: `${d.sizeGb.toFixed(0)} GB → ${rec.sku} (${rec.sizeGib} GiB) ${effTier}`,
+        assumption: `${d.sizeGb.toFixed(0)} GB → ${rec.sku} (${rec.sizeGib} GiB) ${effTier}. ${explainDiskTierChoice(item, effTier)} What's NOT included: snapshot storage, transactions ($0.0044/10k reads), egress bandwidth.`,
       });
     }
   }
@@ -243,7 +248,7 @@ export async function buildLiftShiftBom(
       resourceCount: 1,
       billingTerm: "PAYG",
       workloadNames: haNamesAll,
-      assumption: `Standard LB ~$18.25/mo (5 rules) + ~$3.65/mo data processed (50 GB × $0.005/GB). Hosts the active/standby (or active/active) front-end for ${haPairCount} HA-flagged workload(s).`,
+      assumption: `Standard LB ~$18.25/mo (5 rules) + ~$3.65/mo data processed (50 GB × $0.005/GB). Picked because Standard LB is the only tier with HA-zone redundancy, NSG integration, and outbound rules — Basic LB is retired. Step up to Gateway LB only when you need NVA chaining; one shared LB fronts every HA workload here, so cost stays flat as you add more HA pairs.`,
     });
   }
 

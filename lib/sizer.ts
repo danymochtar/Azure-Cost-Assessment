@@ -144,6 +144,62 @@ export function recommendDisk(sizeGb: number, tier = "Premium SSD"): DiskRec {
   return { sku, tier, sizeGib: cap, meterName: `${sku} LRS Disk` };
 }
 
+/**
+ * Human-readable justification for the VM SKU pick. Composed off the
+ * same memory/vCPU ratio + family rules `recommendVm` uses, so it
+ * tracks the heuristic if it ever evolves. Surfaced in the BOM
+ * `assumption` so a customer architect can defend the pick:
+ * "D8s v5 — general-purpose (mem/cpu ≈ 4:1)."
+ */
+export function explainVmChoice(item: InventoryItem, sku: VmSku): string {
+  const ratio = memoryToCpuRatio(item);
+  const ratioStr = `mem/vCPU ≈ ${ratio.toFixed(1)}:1`;
+  const nonProd = isNonProd(item);
+  const family = sku.family;
+  let fit: string;
+  if (family === "burstable") {
+    fit = nonProd
+      ? `burstable B-series (non-prod, small/steady load); credits accrue when idle so cost scales with actual CPU spikes`
+      : `burstable B-series (small workload that mostly idles); step up to D-series if sustained CPU > the SKU's baseline`;
+  } else if (family === "memory") {
+    fit = `memory-optimised E-series (${ratioStr} ≥ 6 means RAM-heavy — typical for in-memory DBs, large JVMs); step down to D-series if ratio drops below 6`;
+  } else {
+    fit = `general-purpose D-series (${ratioStr} ≈ 4 is the D-series sweet spot); step up to E-series if RAM/vCPU ratio crosses 6, or down to B-series for non-prod/idle workloads`;
+  }
+  return `${sku.display} → ${fit}.`;
+}
+
+/**
+ * Human-readable justification for the disk-tier pick. Mirrors
+ * `recommendDiskTier` exactly so the explanation can't drift from
+ * the rule that was actually applied.
+ */
+export function explainDiskTierChoice(item: InventoryItem, tier: string): string {
+  if (item.hasDb && tier === "Premium SSD") {
+    return `Premium SSD — DB checkbox ticked; databases need <1 ms latency and >1k IOPS that Standard SSD can't sustain.`;
+  }
+  const haystack = [
+    (item.name ?? "").toLowerCase(),
+    (item.os ?? "").toLowerCase(),
+    (item.notes ?? "").toLowerCase(),
+  ].join(" ");
+  if (tier === "Premium SSD" && DB_TOKENS.some((t) => haystack.includes(t))) {
+    const hit = DB_TOKENS.find((t) => haystack.includes(t)) ?? "db";
+    return `Premium SSD — name/notes contains "${hit}" (DB workload); needs sub-ms latency. Step down to Standard SSD for stateless app tiers.`;
+  }
+  if (tier === "Standard HDD" && HDD_TOKENS.some((t) => haystack.includes(t))) {
+    const hit = HDD_TOKENS.find((t) => haystack.includes(t)) ?? "log";
+    return `Standard HDD — name/notes contains "${hit}" (cold/log/backup workload); cheapest tier with adequate throughput for sequential writes.`;
+  }
+  if (tier === "Standard SSD") {
+    return `Standard SSD — default tier for general workloads; balances cost and throughput. Step up to Premium SSD for DB/latency-sensitive; down to HDD for backup.`;
+  }
+  if (tier === "Premium SSD") {
+    return `Premium SSD — user-selected default. Step down to Standard SSD for stateless tiers if cost matters more than <1 ms latency.`;
+  }
+  return `${tier} — user-selected default tier.`;
+}
+
 export function recommendDiskTier(item: InventoryItem, fallback = "Standard SSD"): string {
   // Explicit user-flag wins — when the operator ticks the DB checkbox
   // in the Stage 2 inventory table, we know for sure this is a DB workload.

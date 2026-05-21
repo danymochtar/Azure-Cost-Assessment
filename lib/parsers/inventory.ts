@@ -46,6 +46,11 @@ Conversion rules:
 - workload: best-guess role — 'sql' | 'web' | 'app' | 'cache' | 'queue' | 'file' | 'ad' | 'general'.
 - needs_ha: TRUE when the source document indicates this workload should run in a high-availability topology. Look for phrases like 'active-active', 'active-passive', 'active/standby', 'cluster', 'failover', 'load balanced', 'redundant', 'HA pair', 'primary/secondary', 'highly available', or naming conventions like '-ha-', '-prim-', '-sec-', '-node1/node2'. Defaults to FALSE if not indicated.
 
+JUSTIFY YOUR PICKS — every item MUST include:
+- sizing_rationale: ≤120 chars explaining the VM-shape choice from the SPEC numbers. Tie cpu+memory+workload to an Azure VM family: D/Dv5 = general-purpose (memory/vCPU ≈ 4:1); E/Ev5 = memory-optimised (>6:1 ratio, RAM-heavy DBs); B = burstable for steady low load / non-prod; F = compute-optimised (<2:1 ratio, CPU-heavy batch); NC = GPU. Example: "8 vCPU + 32 GB, mem/cpu=4:1 → D8s v5 general-purpose; prod tier so D-series over B-series."
+- service_rationale: ≤120 chars explaining the recommended_azure_service mapping from the WORKLOAD. Why this Azure service rather than the obvious alternative. Example: "Domain controller — Azure VM rather than App Service because Active Directory needs a domain-joined Windows host." Or: "Stateless web tier — App Service P1v3 rather than VM because no OS-level customisation needed and auto-scale is built-in."
+Default to "" only if the source genuinely gives no signal.
+
 Do NOT invent VMs. Do NOT skip VMs. If a VM has missing fields, set the field to a sensible default and mention it in 'notes'.
 
 You MUST respond by calling 'submit_inventory'.`;
@@ -69,6 +74,8 @@ const ItemSchema = z.object({
   recommended_azure_service: z.string().default("Azure Virtual Machine"),
   notes: z.string().default(""),
   needs_ha: z.boolean().default(false),
+  sizing_rationale: z.string().default(""),
+  service_rationale: z.string().default(""),
 });
 
 const ExtractionSchema = z.object({
@@ -107,6 +114,8 @@ const TOOL_INPUT_SCHEMA = {
           recommended_azure_service: { type: "string" },
           notes: { type: "string" },
           needs_ha: { type: "boolean", description: "True when the source doc indicates this workload runs in an HA topology (cluster, active-active, active-passive, load-balanced, redundant, failover)." },
+          sizing_rationale: { type: "string", description: "≤120 chars: why this VM shape from the SPEC. Tie cpu+memory+workload to an Azure VM family." },
+          service_rationale: { type: "string", description: "≤120 chars: why this Azure service from the WORKLOAD, vs the obvious alternative." },
         },
         required: ["name", "vcpu", "memory_gb", "storage_gb"],
       },
@@ -149,6 +158,12 @@ const EXTRACTION_CASCADE = [
  *     might be a real Haiku miss (pivoted layout, OCR failure on a
  *     screenshot, etc.) and IS worth escalating.
  */
+// Headers / sheet-name tokens that look "VM-shaped" — if a chunk's
+// preview text mentions any of these we expect VMs to be extractable.
+// Sheets with NONE of these (Notes, Cover, ReadMe, ChangeLog tabs) get
+// Haiku's 0-item verdict trusted so we don't burn Sonnet+Opus calls.
+const VM_HINT_RE = /\b(vcpu|cpu|core|memory|ram|gb|mb|mib|disk|storage|server|host|vm|hostname|powerstate|virtual\s*machine|os|operating\s*system)\b/i;
+
 function looksIncomplete(items: InventoryItem[], chunk: UploadChunk): boolean {
   if (items.length === 0) {
     const block = chunk.contentBlocks[0];
@@ -156,7 +171,17 @@ function looksIncomplete(items: InventoryItem[], chunk: UploadChunk): boolean {
       (chunk.kind === "text" || chunk.filename.startsWith("pasted-content-")) &&
       block?.type === "text" &&
       block.text.length < 1500;
-    return !isSmallText;
+    if (isSmallText) return false;
+    // Per-sheet chunks where the preview has no VM-shaped headers — a
+    // Notes / Cover / ChangeLog tab. Trust Haiku's 0 verdict; escalating
+    // would waste Sonnet + Opus tokens on a sheet that genuinely has no
+    // VMs. Only fires on spreadsheet chunks (PDFs / images / large text
+    // still escalate as before).
+    if (chunk.kind === "spreadsheet" && block?.type === "text") {
+      const preview = block.text.slice(0, 4000); // first ~4k chars covers headers + first rows
+      if (!VM_HINT_RE.test(preview)) return false;
+    }
+    return true;
   }
   const broken = items.filter((i) => i.vcpu === 0 && i.memoryGb === 0).length;
   return broken / items.length >= 0.5;
@@ -207,6 +232,8 @@ function mapItems(parsed: z.infer<typeof ExtractionSchema>): InventoryItem[] {
       disks,
       workload: i.workload,
       recommendedAzureService: i.recommended_azure_service,
+      sizingRationale: i.sizing_rationale || undefined,
+      serviceRationale: i.service_rationale || undefined,
       hasDb: detectDb(i.workload, i.name, i.notes),
       hasHa: detectHa(i.needs_ha, i.name, i.notes, i.workload),
     };

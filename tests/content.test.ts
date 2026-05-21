@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { parseCsv } from "@/lib/parsers/content";
+import ExcelJS from "exceljs";
+import { parseCsv, prepareChunks } from "@/lib/parsers/content";
+
+async function buildWorkbook(sheets: Array<{ name: string; rows: unknown[][] }>): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  for (const s of sheets) {
+    const ws = wb.addWorksheet(s.name);
+    for (const row of s.rows) ws.addRow(row);
+  }
+  const ab = await wb.xlsx.writeBuffer();
+  return Buffer.from(ab as ArrayBuffer);
+}
 
 describe("parseCsv — pivoted layouts", () => {
   it("preserves value columns when the header row is narrower than data rows", () => {
@@ -70,5 +81,49 @@ describe("parseCsv — pivoted layouts", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].Name).toBe("vm1");
     expect(rows[1].Name).toBe("vm2");
+  });
+});
+
+describe("prepareChunks — multi-sheet workbooks", () => {
+  it("emits one chunk per populated sheet (so the AI sees focused single-table previews)", async () => {
+    const wb = await buildWorkbook([
+      { name: "SvrSpec",  rows: [["Name", "vCPU", "Memory"], ["erp1", 8, 32], ["erp2", 8, 32]] },
+      { name: "Network",  rows: [["Region", "VNet"], ["eastus2", "hub-vnet"]] },
+      { name: "Notes",    rows: [["Field", "Value"], ["Author", "Acme"], ["Date", "2024-11"]] },
+    ]);
+    const chunks = await prepareChunks(wb, "ERPSvr-2024.xlsx", 500);
+    expect(chunks).toHaveLength(3);
+    expect(chunks.map((c) => c.chunkLabel)).toEqual([
+      "sheet 'SvrSpec'", "sheet 'Network'", "sheet 'Notes'",
+    ]);
+    // Each chunk's preview should mention only its own sheet.
+    for (const c of chunks) {
+      const text = c.contentBlocks[0].type === "text" ? c.contentBlocks[0].text : "";
+      const sheetMentions = text.match(/## Sheet:/g) ?? [];
+      expect(sheetMentions).toHaveLength(1);
+    }
+  });
+
+  it("skips wholly-empty sheets so they don't waste a Claude call", async () => {
+    const wb = await buildWorkbook([
+      { name: "SvrSpec", rows: [["Name", "vCPU"], ["vm1", 4]] },
+      { name: "Empty",   rows: [] },
+    ]);
+    const chunks = await prepareChunks(wb, "single.xlsx", 500);
+    // Single populated sheet → fast path (1 chunk), not multi-sheet branch.
+    expect(chunks).toHaveLength(1);
+  });
+
+  it("splits a single large sheet into row-sliced chunks", async () => {
+    const headerRow: unknown[] = ["Name", "vCPU"];
+    const dataRows: unknown[][] = Array.from({ length: 1200 }, (_, i) => [`vm${i + 1}`, 2]);
+    const wb = await buildWorkbook([{ name: "Big", rows: [headerRow, ...dataRows] }]);
+    const chunks = await prepareChunks(wb, "big.xlsx", 500);
+    expect(chunks).toHaveLength(3);
+    // Existing cross-sheet path uses en-dash separators ("rows 1–500 of 1200");
+    // tolerate either form so a future format tweak doesn't break the test.
+    for (const c of chunks) {
+      expect(c.chunkLabel).toMatch(/rows \d+[–-]\d+/);
+    }
   });
 });

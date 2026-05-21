@@ -260,14 +260,18 @@ const PILLAR_FORMS: Record<string, { pid: string; label: string; fields: PillarF
     label: "Infra Modernization",
     fields: [
       { key: "appServicePlan", label: "App Service plan", kind: "select", defaultValue: "P1v3",
+        hint: "P0v3 (1 vCPU/4 GB) = dev/test. P1v3 (2/8) = small prod. P2v3 (4/16) = step up when CPU >70 % at peak. P3v3 (8/32) = heavy in-process caches; consider AKS past 30 instances.",
         options: [{value:"P0v3",label:"P0v3"},{value:"P1v3",label:"P1v3"},{value:"P2v3",label:"P2v3"},{value:"P3v3",label:"P3v3"}] },
       { key: "appServiceInstances", label: "App Service instances", kind: "number", defaultValue: 3, min: 0 },
       { key: "aksNodeSku", label: "AKS worker SKU", kind: "select", defaultValue: "D4s_v5",
+        hint: "D2s_v5 = dev. D4s_v5 (4 vCPU/16 GB) = prod baseline, ~50-60 pods/node. D8s_v5 = high-density (cheaper per pod beyond 40 pods). D16s_v5 = stateful / big JVM heaps; usually scale out more D8s nodes instead.",
         options: [{value:"D2s_v5",label:"D2s_v5"},{value:"D4s_v5",label:"D4s_v5"},{value:"D8s_v5",label:"D8s_v5"},{value:"D16s_v5",label:"D16s_v5"}] },
       { key: "aksNodeCount", label: "AKS worker count", kind: "number", defaultValue: 3, min: 0 },
       { key: "apimTier", label: "APIM tier", kind: "select", defaultValue: "developer",
+        hint: "Developer = single-instance, no SLA, evaluation only — never prod (also v1 legacy). Basic v2 = first prod tier (~500 RPS). Standard v2 = prod default (+VNet integration). Premium v2 = multi-region + internal VNet (~4k RPS).",
         options: [{value:"off",label:"off"},{value:"developer",label:"Developer"},{value:"basic_v2",label:"Basic v2"},{value:"standard_v2",label:"Standard v2"},{value:"premium_v2",label:"Premium v2"}] },
       { key: "frontDoorTier", label: "Front Door tier", kind: "select", defaultValue: "standard",
+        hint: "Standard = L7 ingress + managed WAF rules. Premium adds DDoS, Private Link to origins, custom WAF, bot management — the ~$295/mo delta over Standard buys real attack-surface reduction.",
         options: [{value:"off",label:"off"},{value:"standard",label:"Standard"},{value:"premium",label:"Premium"}] },
       { key: "acrTier", label: "ACR tier", kind: "select", defaultValue: "standard",
         options: [{value:"off",label:"off"},{value:"basic",label:"Basic"},{value:"standard",label:"Standard"},{value:"premium",label:"Premium"}] },
@@ -278,14 +282,18 @@ const PILLAR_FORMS: Record<string, { pid: string; label: string; fields: PillarF
     label: "Data Platform",
     fields: [
       { key: "fabricCapacity", label: "Microsoft Fabric capacity", kind: "select", defaultValue: "F2",
+        hint: "F2 = single-user dev. F4 = 5-10 analysts. F8 = multi-team prod baseline. F16-F32 = heavier concurrent BI + Spark. F64+ = enterprise multi-domain (Reserved Instance mandatory above F8 for the ~30 % discount).",
         options: ["off","F2","F4","F8","F16","F32","F64","F128","F256","F512"].map((v)=>({value:v,label:v})) },
       { key: "sqlDbTier", label: "SQL DB tier", kind: "select", defaultValue: "gp",
+        hint: "GP = 99.99 % SLA, single primary, remote premium storage — default for most. BC = 99.995 % SLA, Always On synchronous replicas, local SSD, in-memory OLTP. ~3× the cost of GP — justified for tier-1 transactional workloads where downtime is measured in minutes.",
         options: [{value:"off",label:"off"},{value:"gp",label:"General Purpose"},{value:"bc",label:"Business Critical"}] },
       { key: "sqlDbVcores", label: "SQL DB vCores", kind: "number", defaultValue: 2, min: 0 },
-      { key: "cosmosMillionRuPerMonth", label: "Cosmos RU/mo (millions)", kind: "number", defaultValue: 100, min: 0 },
+      { key: "cosmosMillionRuPerMonth", label: "Cosmos RU/mo (millions)", kind: "number", defaultValue: 100, min: 0,
+        hint: "Serverless ($0.28/M RU, no minimum) is cheapest for bursty/unpredictable workloads. Step up to Provisioned Throughput autoscale around ~200 M RU/mo — at that volume the per-RU rate drops ~50 %." },
       { key: "adlsGb", label: "ADLS Gen2 hot tier (GB)", kind: "number", defaultValue: 1000, min: 0 },
       { key: "eventHubsTu", label: "Event Hubs TUs", kind: "number", defaultValue: 1, min: 0 },
       { key: "redisTier", label: "Redis tier", kind: "select", defaultValue: "standard_c1",
+        hint: "Basic = NO SLA, dev/test only (will lose keys on restart). Standard = HA + failover, 99.9 % SLA (production default). Premium = clustering, geo-replication, persistence, VNet — required for >1 GB datasets, multi-region active reads, or compliance.",
         options: [{value:"off",label:"off"},{value:"basic_c0",label:"Basic C0"},{value:"basic_c1",label:"Basic C1"},{value:"standard_c1",label:"Standard C1"},{value:"premium_p1",label:"Premium P1"}] },
     ],
   },
@@ -294,15 +302,18 @@ const PILLAR_FORMS: Record<string, { pid: string; label: string; fields: PillarF
     label: "AI Application",
     fields: [
       { key: "openAiModel", label: "Azure OpenAI model", kind: "select", defaultValue: "gpt-4o",
+        hint: "gpt-4o-mini: cheapest prod-quality (~17× cheaper than 4o). gpt-4o: general + multi-modal (128k ctx). gpt-4.1: 1M ctx for long docs. o1 / o3-mini: reasoning models (planning, math) — slower and 4-6× cost.",
         options: ["gpt-4o","gpt-4o-mini","gpt-4.1","gpt-4.1-mini","o1","o1-mini","o3-mini"].map((v)=>({value:v,label:v})) },
       { key: "openAiInputTokensMillions", label: "Input tokens (millions/mo)", kind: "number", defaultValue: 5, min: 0, step: 0.5 },
       { key: "openAiOutputTokensMillions", label: "Output tokens (millions/mo)", kind: "number", defaultValue: 1, min: 0, step: 0.5 },
       { key: "openAiCachedInputTokensMillions", label: "Cached input tokens (millions/mo)", kind: "number", defaultValue: 0, min: 0, step: 0.5 },
       { key: "embeddingsTokensMillions", label: "Embeddings tokens (millions/mo)", kind: "number", defaultValue: 50, min: 0, step: 1 },
       { key: "aiSearchTier", label: "AI Search tier", kind: "select", defaultValue: "s1",
+        hint: "Basic: 2 GB / 50k docs / dev only. S1: 25 GB / ~15M docs per partition / prod default. S2: 100 GB / ~60M docs / step up when index >20 GB. S3: 200 GB / ~200M docs / enterprise scale.",
         options: [{value:"off",label:"off"},{value:"basic",label:"Basic"},{value:"s1",label:"Standard S1"},{value:"s2",label:"Standard S2"},{value:"s3",label:"Standard S3"}] },
       { key: "aiSearchPartitions", label: "AI Search partitions", kind: "number", defaultValue: 1, min: 0 },
       { key: "mlComputeSku", label: "Azure ML compute SKU", kind: "select", defaultValue: "D8s_v5",
+        hint: "D4s/D8s/D16s = CPU for classical ML / tabular. NC4as_T4_v3 = entry GPU (T4, no bf16) for inference / small fine-tune. NC24ads_A100_v4 = A100 80GB for LLM fine-tuning — consider Spot (~60-80 % off) for non-interactive jobs.",
         options: ["D4s_v5","D8s_v5","D16s_v5","NC4as_T4_v3","NC24ads_A100_v4"].map((v)=>({value:v,label:v})) },
       { key: "mlComputeHoursMonth", label: "ML compute hours/mo", kind: "number", defaultValue: 120, min: 0 },
       { key: "docIntelligencePagesK", label: "Document Intelligence pages (k/mo)", kind: "number", defaultValue: 50, min: 0 },
@@ -313,6 +324,7 @@ const PILLAR_FORMS: Record<string, { pid: string; label: string; fields: PillarF
     label: "Azure Security",
     fields: [
       { key: "entraIdTier", label: "Entra ID tier", kind: "select", defaultValue: "p2",
+        hint: "P1: Conditional Access + SSPR — sufficient for most knowledge workers. P2: adds PIM (just-in-time admin), Identity Protection, Access Reviews — license only privileged users (~10 % of tenant), keep the rest on P1 / free.",
         options: [{value:"off",label:"off"},{value:"p1",label:"P1"},{value:"p2",label:"P2"}] },
       { key: "entraIdUsers", label: "Entra ID licensed users", kind: "number", defaultValue: 50, min: 0 },
       { key: "purviewCapacityUnits", label: "Purview capacity units", kind: "number", defaultValue: 1, min: 0 },
@@ -378,7 +390,12 @@ function PillarParametersForm({
                 const current = v[f.key] ?? f.defaultValue;
                 return (
                   <div key={f.key} className="field">
-                    <label className="field-label" htmlFor={`pp-${spec.pid}-${f.key}`}>{f.label}</label>
+                    <label className="field-label" htmlFor={`pp-${spec.pid}-${f.key}`}>
+                      {f.label}
+                      {f.hint && (
+                        <Tooltip label={f.label} content={f.hint} />
+                      )}
+                    </label>
                     {f.kind === "select" && f.options ? (
                       <select
                         id={`pp-${spec.pid}-${f.key}`}
@@ -1324,6 +1341,11 @@ export default function AssessmentApp({ user }: { user: string }) {
         </div>
         {profile.summary && (
           <p className="helper" style={{ marginTop: "0.5rem" }}>{profile.summary}</p>
+        )}
+        {profile.reasoning && (
+          <p className="helper" style={{ marginTop: "0.35rem", fontStyle: "italic" }}>
+            <strong>Why this pillar:</strong> {profile.reasoning}
+          </p>
         )}
 
         {/* Microsoft Solution Areas — grouped pillar picker. */}

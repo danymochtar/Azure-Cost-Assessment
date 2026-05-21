@@ -352,6 +352,83 @@ export interface UploadChunk extends UploadContent {
   chunkLabel?: string;    // "rows 1-300 of 2000"
 }
 
+/** Render a single sheet (or a row-slice of a sheet) as a Claude-
+ *  friendly text preview. Pulled out so the multi-sheet and the
+ *  cross-sheet chunking paths share the same formatting. */
+function renderSheetPreview(
+  filename: string,
+  sheet: { name: string; headers: string[]; rows: Record<string, unknown>[] },
+  rowIdxs: number[],
+  contextNote: string,
+): string {
+  const out: string[] = [
+    `# ${filename}`,
+    `## Sheet: ${sheet.name} (${sheet.rows.length.toLocaleString()} rows total; this chunk: ${rowIdxs.length})`,
+    contextNote,
+    `Columns: ${sheet.headers.join(" | ")}`,
+    "Rows:",
+  ];
+  for (const ri of rowIdxs) {
+    const r = sheet.rows[ri];
+    out.push(sheet.headers.map((h) => String(r[h] ?? "")).join(" | "));
+  }
+  return out.join("\n");
+}
+
+/** Emit one chunk per sheet — and split sheets larger than rowsPerChunk
+ *  into multiple row-sliced chunks. Used whenever the workbook has >1
+ *  populated sheet, so the model never sees a multi-sheet mash-up. */
+function perSheetChunks(
+  filename: string,
+  sheets: { name: string; headers: string[]; rows: Record<string, unknown>[] }[],
+  rowsPerChunk: number,
+): UploadChunk[] {
+  // First pass: build per-sheet slices so we know the total chunk count
+  // before emitting any (need totalChunks for the chunk metadata).
+  const plan: Array<{ sheetIdx: number; rowIdxs: number[]; label: string }> = [];
+  for (let si = 0; si < sheets.length; si += 1) {
+    const sheet = sheets[si];
+    if (sheet.rows.length <= rowsPerChunk) {
+      plan.push({
+        sheetIdx: si,
+        rowIdxs: sheet.rows.map((_, i) => i),
+        label: `sheet '${sheet.name}'`,
+      });
+    } else {
+      // Big sheet: row-slice it. RVTools vInfo with 2,000 hosts lands here.
+      for (let start = 0; start < sheet.rows.length; start += rowsPerChunk) {
+        const end = Math.min(start + rowsPerChunk, sheet.rows.length);
+        plan.push({
+          sheetIdx: si,
+          rowIdxs: Array.from({ length: end - start }, (_, i) => start + i),
+          label: `sheet '${sheet.name}' rows ${start + 1}-${end}`,
+        });
+      }
+    }
+  }
+
+  const total = plan.length;
+  return plan.map((p, ci) => {
+    const sheet = sheets[p.sheetIdx];
+    const text = renderSheetPreview(
+      filename,
+      sheet,
+      p.rowIdxs,
+      `Workbook has ${sheets.length} populated sheet(s); this chunk is ${p.label} (chunk ${ci + 1} of ${total}).`,
+    );
+    return {
+      kind: "spreadsheet",
+      filename,
+      contentBlocks: [{ type: "text", text }],
+      textSummary: `Spreadsheet chunk ${ci + 1}/${total} — ${p.label}`,
+      rowCount: p.rowIdxs.length,
+      chunkIndex: ci,
+      totalChunks: total,
+      chunkLabel: p.label,
+    };
+  });
+}
+
 export async function prepareChunks(
   data: Buffer,
   filename: string,
@@ -378,7 +455,20 @@ export async function prepareChunks(
     sheets = (await readWorkbook(data, filename)).sheets;
   }
 
-  const totalRows = sheets.reduce((sum, s) => sum + s.rows.length, 0);
+  // Drop sheets with zero rows (Notes / Cover / empty templates) so they
+  // don't waste a Claude call returning "no items here."
+  const nonEmptySheets = sheets.filter((s) => s.rows.length > 0);
+  const totalRows = nonEmptySheets.reduce((sum, s) => sum + s.rows.length, 0);
+
+  // Multi-sheet workbooks: emit ONE chunk per sheet so the model sees
+  // a focused single-table preview rather than a mash-up where it
+  // can't tell which sheet to extract from. A workbook with a SvrSpec
+  // sheet + a Notes sheet + a Network sheet used to come back with
+  // zero items because the AI fixated on the wrong one. Per-sheet
+  // chunking gives each sheet its own pass with full headers + rows.
+  if (nonEmptySheets.length > 1) {
+    return perSheetChunks(filename, nonEmptySheets, rowsPerChunk);
+  }
 
   // Single-chunk fast path: small files behave exactly like prepare()
   // used to. No batching overhead for the common RVTools-with-50-VMs case.
