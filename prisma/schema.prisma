@@ -44,6 +44,8 @@ model Project {
   applyHeadroom   Boolean  @map("apply_headroom")
   headroom        Float
   landingZoneTier String   @default("none") @map("landing_zone_tier")
+  landingZoneComponents Json? @map("landing_zone_components")
+  landingZoneParams     Json? @map("landing_zone_params")
   activePillars   Json     @default("[]") @map("active_pillars")
   items           Json     @default("[]")
   lines           Json     @default("[]")

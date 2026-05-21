@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { buildLiftShiftBom, type LiftShiftOptions } from "@/lib/pillars/lift-shift";
-import { buildLandingZoneBom, type LandingZoneTier } from "@/lib/pillars/landing-zone";
+import {
+  buildLandingZoneBom,
+  buildLandingZoneBomFromComponents,
+  type LandingZoneTier,
+} from "@/lib/pillars/landing-zone";
 import type { InventoryItem, Notice } from "@/lib/models";
 import { RetailPricesClient } from "@/lib/pricing/retail";
 
@@ -40,6 +44,21 @@ const OptionsSchema = z.object({
   appName: z.string(),
   headroom: z.number().min(1.0).max(2.0),
   landingZoneTier: z.enum(["none", "basic", "standard", "enterprise"]).default("none"),
+  // When `landingZoneComponents` is present (length > 0) the route uses
+  // the explicit id list instead of the tier preset — that's how the
+  // "Customize components" UI surfaces its picks.
+  landingZoneComponents: z.array(z.string()).optional(),
+  landingZoneParams: z.object({
+    firewallDataGbPerMonth: z.number().nonnegative().optional(),
+    privateDnsZoneCount: z.number().int().nonnegative().optional(),
+    privateEndpointCount: z.number().int().nonnegative().optional(),
+    storageAccountCount: z.number().int().nonnegative().optional(),
+    keyVaultCount: z.number().int().nonnegative().optional(),
+    containerVCoreCount: z.number().int().nonnegative().optional(),
+    appServiceCount: z.number().int().nonnegative().optional(),
+    sentinelGbPerMonth: z.number().nonnegative().optional(),
+    logAnalyticsGbPerMonth: z.number().nonnegative().optional(),
+  }).optional(),
 });
 
 const BodySchema = z.object({
@@ -56,12 +75,22 @@ export async function POST(req: Request) {
       body.options as LiftShiftOptions,
       client,
     );
-    const lzLines = buildLandingZoneBom(
-      body.options.landingZoneTier as LandingZoneTier,
-      body.options.region,
-      body.options.appName,
-      body.items as InventoryItem[],
-    );
+    const lzLines = body.options.landingZoneComponents && body.options.landingZoneComponents.length > 0
+      ? buildLandingZoneBomFromComponents(
+          body.options.landingZoneComponents,
+          body.options.region,
+          body.options.appName,
+          body.items as InventoryItem[],
+          body.options.landingZoneParams,
+          body.options.landingZoneTier as LandingZoneTier,
+        )
+      : buildLandingZoneBom(
+          body.options.landingZoneTier as LandingZoneTier,
+          body.options.region,
+          body.options.appName,
+          body.items as InventoryItem[],
+          body.options.landingZoneParams,
+        );
     const lines = [...lzLines, ...workloadLines];
 
     const notices: Notice[] = [];

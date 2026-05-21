@@ -612,6 +612,53 @@ details.notice-pill-expandable > p {
   white-space: pre-wrap;
 }
 
+/* Landing Zone customize checklist — appears under the tier picker
+ * when the user opts to customise. Grouped by category, each row a
+ * checkbox + bold label + faint description. */
+.lz-checklist {
+  margin-top: 0.75rem;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-soft, rgba(148, 163, 184, 0.05));
+}
+.lz-checklist-group + .lz-checklist-group { margin-top: 0.75rem; }
+.lz-checklist-head {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #64748b);
+  margin-bottom: 0.35rem;
+}
+.lz-checklist-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.35rem 0;
+  cursor: pointer;
+}
+.lz-checklist-row + .lz-checklist-row {
+  border-top: 1px dashed var(--border, #e2e8f0);
+}
+.lz-checklist-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.lz-checklist-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted, #64748b);
+}
+@media (max-width: 640px) {
+  .lz-checklist-row {
+    grid-template-columns: auto 1fr;
+  }
+  .lz-checklist-desc {
+    grid-column: 2;
+  }
+}
+
 /* Copyright line shown beneath login / register / forgot cards. */
 .copyright-line {
   margin-top: 1.25rem;
