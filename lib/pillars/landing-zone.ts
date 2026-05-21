@@ -8,10 +8,11 @@
 //
 // Three opinionated tiers are exposed in Stage 3 so the BOM reflects
 // real-world hub cost (not just the workload VMs):
-//   - basic       — POC / small dev workload. Bastion + Key Vault + LA + free Defender.
-//   - standard    — production hub-spoke. Adds Firewall Std, VPN, App GW WAF v2, Sentinel.
+//   - basic       — POC / small workload. Public IP + VPN + App GW + Defender Servers P1.
+//   - standard    — production hub-spoke. Adds Bastion Std, Firewall Std, Key Vault,
+//                   Private DNS, plus Defender CSPM/CWP scaled by inventory.
 //   - enterprise  — full ALZ. Firewall Premium, ExpressRoute, DDoS Network Protection,
-//                   private endpoints.
+//                   Private Endpoints, Sentinel + Log Analytics SOC, Servers P2.
 //
 // Prices below are East US 2 USD list rates (Microsoft public retail, late
 // 2025). They are deliberately encoded as flat baselines per line — not
@@ -40,7 +41,7 @@ export const LANDING_ZONE_LABELS: Record<LandingZoneTier, string> = {
 export const LANDING_ZONE_DESCRIPTIONS: Record<LandingZoneTier, string> = {
   none: "Workload-only estimate. Use when the platform hub is already deployed and billed separately.",
   basic: "Standard Public IP, VPN Gateway VpnGw1 (S2S to on-prem), Application Gateway WAF v2, and Defender for Servers Plan 1 scaled by VM count. Minimum hybrid hub for POC / small workload.",
-  standard: "Adds hub-spoke: Azure Bastion Standard, Azure Firewall Standard (+ data processed), Key Vault, Sentinel PAYG (50 GB), 50 GB Log Analytics, Private DNS zones. Defender CSPM + Resource Manager + Storage + Key Vault CWP plans scale with the inventory; Servers stays on Plan 1. Recommended production baseline.",
+  standard: "Adds hub-spoke: Azure Bastion Standard, Azure Firewall Standard (+ data processed), Key Vault, Private DNS zones. Defender CSPM + Resource Manager + Storage + Key Vault CWP plans scale with the inventory; Servers stays on Plan 1. SOC (Sentinel + Log Analytics) joins at Enterprise. Recommended production baseline.",
   enterprise: "Full ALZ: Firewall Premium (replaces Std), ExpressRoute circuit + gateway, DDoS Network Protection, 10× Private Endpoints. Defender for Servers upgrades to P2 (adds agentless scanning, FIM, JIT, free DNS), plus Defender for SQL on Machines (scaled to DB-hosting VMs), Containers, and App Service. Required for regulated / multi-region landings.",
 };
 
@@ -163,6 +164,15 @@ const STANDARD: LzPresetLine[] = [
     monthlyCost: 3, unit: "1/Month", unitPrice: 3, quantity: 1,
     assumption: "Standard vault for hub-managed secrets / certs / TLS. ~30k operations/month × $0.03/10k ≈ $0.10; padded to $3 for HSM-backed key allowance.",
   },
+  // Sentinel and Log Analytics 50 GB workspace are not part of Standard
+  // anymore — they belong with the full SOC stack at Enterprise tier.
+];
+
+const ENTERPRISE: LzPresetLine[] = [
+  // Inherits Standard except Firewall upgrades to Premium. Sentinel and
+  // a production-sized Log Analytics workspace join at this tier — full
+  // SOC stack only makes sense at Enterprise scale.
+  ...STANDARD.filter((l) => !l.resource.startsWith("Azure Firewall — Standard")),
   {
     category: "Landing Zone · Security",
     resource: "Microsoft Sentinel — PAYG (50 GB/mo)",
@@ -175,13 +185,8 @@ const STANDARD: LzPresetLine[] = [
     resource: "Log Analytics workspace — 50 GB/mo",
     sku: "log-analytics-50gb",
     monthlyCost: 115, unit: "1 GB", unitPrice: 2.30, quantity: 50,
-    assumption: "50 GB × $2.30/GB after free quota ≈ $115. Standard production retention baseline; scale with workload growth.",
+    assumption: "50 GB × $2.30/GB after free quota ≈ $115. Enterprise SOC retention baseline; scale with workload growth.",
   },
-];
-
-const ENTERPRISE: LzPresetLine[] = [
-  // Inherits Standard except Firewall upgrades to Premium.
-  ...STANDARD.filter((l) => !l.resource.startsWith("Azure Firewall — Standard")),
   {
     category: "Landing Zone · Networking",
     resource: "Azure Firewall — Premium (deployment)",
