@@ -114,6 +114,35 @@ describe("prepareChunks — multi-sheet workbooks", () => {
     expect(chunks).toHaveLength(1);
   });
 
+  it("fills merged-cell values down so server labels survive (ERPSvr-2024 shape)", async () => {
+    // Real-world spec sheet: column A holds the server name merged across
+    // every spec row of that server. Before the merge-fill, ExcelJS gave
+    // null for non-master cells and the model couldn't tell ERP2 rows
+    // apart from ERP1 rows.
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("SvrSpec");
+    ws.addRow(["YM ERP server with hyper-v"]);
+    ws.addRow(["ERP1", "Server Type", "Virtual server"]);
+    ws.addRow([null,   "Processor",   "Xeon Gold 6346"]);
+    ws.addRow([null,   "RAM",         "384 GB"]);
+    ws.addRow(["ERP2", "Server Type", "Virtual server"]);
+    ws.addRow([null,   "Processor",   "Xeon Gold 6346"]);
+    ws.addRow([null,   "RAM",         "384 GB"]);
+    ws.mergeCells("A2:A4");
+    ws.mergeCells("A5:A7");
+    const buf = Buffer.from(await wb.xlsx.writeBuffer() as ArrayBuffer);
+
+    const chunks = await prepareChunks(buf, "ERPSvr-2024.xlsx", 500);
+    expect(chunks).toHaveLength(1);
+    const text = chunks[0].contentBlocks[0].type === "text" ? chunks[0].contentBlocks[0].text : "";
+    // ERP1 / ERP2 labels must appear on the Processor and RAM rows too,
+    // not just on the Server Type row that originally held the merge master.
+    const erp1Lines = text.split("\n").filter((l) => l.includes("ERP1"));
+    const erp2Lines = text.split("\n").filter((l) => l.includes("ERP2"));
+    expect(erp1Lines.length).toBeGreaterThanOrEqual(3); // Server Type + Processor + RAM
+    expect(erp2Lines.length).toBeGreaterThanOrEqual(3);
+  });
+
   it("splits a single large sheet into row-sliced chunks", async () => {
     const headerRow: unknown[] = ["Name", "vCPU"];
     const dataRows: unknown[][] = Array.from({ length: 1200 }, (_, i) => [`vm${i + 1}`, 2]);

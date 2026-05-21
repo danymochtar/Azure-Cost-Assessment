@@ -27,6 +27,14 @@ CRITICAL — read the VALUES, not just the labels:
   "Processor", "RAM", "Disk".
 - If a sheet has multiple value columns adjacent to one key column,
   each value column is a separate server — extract them all.
+- VERTICALLY-GROUPED spec sheets: when the SAME label (e.g. "ERP1",
+  "ERP2", "ERP3") repeats every N rows in the leftmost column and
+  each block has its own Server Type / Processor / RAM / OS / Disk
+  rows, treat each label as ONE server. The preview pre-fills merged
+  cells, so a column-A value of "ERP2" on a "Processor" row really
+  does belong to ERP2 — don't merge it with ERP1 just because the
+  spec keys repeat. Output one item per distinct leftmost-column
+  label, name = that label.
 - For images: zoom mentally on every column you can see. Do not assume
   the right-hand column is missing just because it's narrow or visually
   separated — re-read the pixels before defaulting to zeros.
