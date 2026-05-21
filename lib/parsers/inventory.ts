@@ -43,9 +43,45 @@ CRITICAL — read the VALUES, not just the labels:
   note explaining what was missing so the user can fix the upload.
 
 Conversion rules:
-- vCPU = total cores. If only "2 x 16-core CPUs" is given, vCPU = 32.
+- vCPU = total physical CORES from the source spec (Azure VM SKUs run
+  with hyperthreading, so 1 physical core ≈ 2 Azure vCPUs at peak —
+  the user's "Apply safety margin" knob handles HT-equivalent sizing
+  upstream). Patterns:
+    * "2 x 16-core CPUs"            → vCPU = 2 × 16 = 32
+    * "Dual Xeon, 24 cores per socket" → vCPU = 2 × 24 = 48
+    * "2 x Intel Xeon Gold 6346 (16 Cores, 3.1GHz)" → vCPU = 2 × 16 = 32
+    * "2 x Intel Xeon Platinum 8480 (56 cores, 2.0GHz)" → vCPU = 2 × 56 = 112
+    * If only an Intel/AMD SKU name is given (no "(N Cores)" annotation),
+      derive cores from the SKU number. Common Intel Xeon Scalable cores:
+        Gold 5318=24, Gold 5320=26, Gold 6326=16, Gold 6334=8,
+        Gold 6338=32, Gold 6342=24, Gold 6346=16, Gold 6348=28,
+        Gold 6354=18, Gold 6442Y=24, Platinum 8260=24, Platinum 8362=32,
+        Platinum 8380=40, Platinum 8480=56, Platinum 8490H=60,
+        Silver 4310=12, Silver 4314=16, Silver 4316=20.
+      Common AMD EPYC cores:
+        7313=16, 7443=24, 7543=32, 7713=64, 7763=64, 9354=32, 9554=64,
+        9654=96.
+      Multiply by the socket count (the "N x" prefix or "dual/quad").
+    * If multiple sockets but only one core count is given, the count
+      is PER-SOCKET (industry convention). "2 x Xeon Gold 6346 (16
+      Cores)" = 32 total cores, not 16.
+    * Hyper-V / VMware vCPU columns already report hyperthreads —
+      use the column value directly without multiplying.
+    * Only return vCPU=0 when the source genuinely gives no
+      processor info. Don't return 0 just because the SKU isn't on
+      the list above — make a confident estimate from the SKU
+      generation/tier (Gold mid-grade ≈ 16–32 cores, Platinum
+      high-grade ≈ 24–60 cores) and note it.
 - memory_gb: convert MB/MiB to GB (divide by 1024). GiB ~= GB.
-- storage_gb: sum of all disk capacities in GB. Convert TB → GB by ×1024.
+- storage_gb: sum of EVERY disk's capacity in GB. Convert TB → GB by
+  ×1024. Pattern "C: 2 X 256GB SSD RAID1 | D: 4 x 1.9TB SSD, RAID 10
+  | E: 2 X 1.9TB SSD, RAID1" means three logical volumes:
+      C = 2 × 256 GB = 512 GB
+      D = 4 × 1.9 TB = 7.6 TB = 7,782 GB
+      E = 2 × 1.9 TB = 3.8 TB = 3,891 GB
+    Total storage_gb = 12,185 GB. RAID overhead is not subtracted —
+    it's a deployment detail, not a usable-capacity reduction the
+    customer cares about for Azure sizing.
 - disks: when the source has per-disk rows (RVTools vDisk, Azure Migrate disks),
   populate one entry per disk. When only a single total is given, leave disks=[].
 - os: best-guess family from any OS string. Default 'Linux' if absent.
@@ -53,6 +89,36 @@ Conversion rules:
 - powerstate: 'poweredOn' / 'poweredOff' / 'unknown'.
 - workload: best-guess role — 'sql' | 'web' | 'app' | 'cache' | 'queue' | 'file' | 'ad' | 'general'.
 - needs_ha: TRUE when the source document indicates this workload should run in a high-availability topology. Look for phrases like 'active-active', 'active-passive', 'active/standby', 'cluster', 'failover', 'load balanced', 'redundant', 'HA pair', 'primary/secondary', 'highly available', or naming conventions like '-ha-', '-prim-', '-sec-', '-node1/node2'. Defaults to FALSE if not indicated.
+
+WORKED EXAMPLE — vertically-grouped spec sheet (the ERPSvr-2024 shape):
+
+Source preview (merged column A pre-filled, so each row carries the server label):
+
+  ERP1 | Server Type    | Virtual server run on Dedicated Physical Server
+  ERP1 | Processor      | 2 x Intel Xeon Gold 6346 (16 Cores, 3.1GHz)
+  ERP1 | RAM (GB)       | 384
+  ERP1 | OS             | Windows Server 2019 Standard Edition (64 bit)
+  ERP1 | Disk (GB)      | c: 2 X 256GB SSD RAID1 | D: 2 x 1.6TB SSD, RAID 1
+  ERP1 | Network speed  | 1Gbps
+  ERP1 | Bandwidth Quota| Unlimited
+  ERP2 | Server Type    | Virtual server run on Dedicated Physical Server
+  ERP2 | Processor      | 2 x Intel Xeon Gold 6346 (16 Cores, 3.1GHz)
+  ERP2 | RAM (GB)       | 384
+  ERP2 | OS             | Windows Server 2019 Standard Edition (64 bit)
+  ERP2 | Disk (GB)      | c: 2 X 256GB SSD RAID1 | D: 4 x 1.9TB SSD, RAID 10 | E: 2 X 1.9TB SSD, RAID1
+  …
+
+Correct extraction = ONE item per distinct leftmost label. For ERP1:
+  name="ERP1", vcpu=32 (2 sockets × 16 Xeon Gold 6346 cores),
+  memory_gb=384, storage_gb=3789 (512 GB C + 3,277 GB D),
+  os="Windows", environment="prod", workload="general",
+  recommended_azure_service="Azure Virtual Machine",
+  sizing_rationale="32 cores + 384 GB, mem/vCPU=12 → E-series memory-optimised; E32s v5",
+  service_rationale="Hyper-V VM running ERP — Azure VM rather than App Service because the workload is a packaged ERP needing OS-level access".
+
+The Firewall / Fixed IP / Antivirus / Backup / Hacker / Support / Datacentre
+rows BELOW the server blocks are SERVICE-CONTRACT attributes, NOT separate
+servers — do not emit items for them.
 
 JUSTIFY YOUR PICKS — every item MUST include:
 - sizing_rationale: ≤120 chars explaining the VM-shape choice from the SPEC numbers. Tie cpu+memory+workload to an Azure VM family: D/Dv5 = general-purpose (memory/vCPU ≈ 4:1); E/Ev5 = memory-optimised (>6:1 ratio, RAM-heavy DBs); B = burstable for steady low load / non-prod; F = compute-optimised (<2:1 ratio, CPU-heavy batch); NC = GPU. Example: "8 vCPU + 32 GB, mem/cpu=4:1 → D8s v5 general-purpose; prod tier so D-series over B-series."
