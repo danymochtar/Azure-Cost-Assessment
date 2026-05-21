@@ -91,11 +91,20 @@ export function buildAiApplicationBom(
   if (inM > 0 || outM > 0 || cachedM > 0) {
     const r = OPENAI[model];
     const cost = inM * r.input + outM * r.output + cachedM * r.cachedInput;
+    const modelFit: Record<OpenAiModel, string> = {
+      "gpt-4o-mini":  "gpt-4o-mini — cheapest production-quality model (~17× cheaper than 4o on input). Use for classification, extraction, simple summarisation, RAG answer generation at high volume. 128k context. Not great for multi-step reasoning or precise math.",
+      "gpt-4o":       "gpt-4o — general-purpose flagship; multi-modal (text + image input). Use for summarisation, complex Q&A, code, vision tasks. 128k context. Step down to 4o-mini for high-volume simple tasks; step up to o1 for reasoning-heavy work (planning, math).",
+      "gpt-4.1":      "gpt-4.1 — long-context (1M tokens) and improved instruction-following. Use when you need to feed entire codebases / large docs in one shot. Slightly cheaper than 4o on input. Not multi-modal.",
+      "gpt-4.1-mini": "gpt-4.1-mini — long-context (1M tokens) at a fraction of 4.1's cost. Use for batch document analysis at scale where 4o-mini's context is too small.",
+      "o1":           "o1 — reasoning model with internal chain-of-thought. Use for complex math, multi-step planning, scientific problems. Much slower (~30 s) and ~6× the cost of 4o. Don't use for simple chat — wasted spend.",
+      "o1-mini":      "o1-mini — cheaper reasoning model. Use for code / math at scale where o1's quality isn't required. ~4× the cost of 4o-mini but with planning capability.",
+      "o3-mini":      "o3-mini — newest reasoning model, cheaper than o1-mini with comparable quality on STEM tasks. Default choice for reasoning workloads in 2026.",
+    };
     push(
       `Azure OpenAI — ${model} (${inM}M in + ${outM}M out${cachedM ? ` + ${cachedM}M cached` : ""})`,
       `aoai-${model}`,
       cost, "1M tokens", r.input, inM + outM + cachedM,
-      `${inM}M × $${r.input}/M (in) + ${outM}M × $${r.output}/M (out)${cachedM ? ` + ${cachedM}M × $${r.cachedInput}/M (cached)` : ""} = $${cost.toFixed(2)}.`,
+      `${inM}M × $${r.input}/M (in) + ${outM}M × $${r.output}/M (out)${cachedM ? ` + ${cachedM}M × $${r.cachedInput}/M (cached)` : ""} = $${cost.toFixed(2)}. Picked because ${modelFit[model]} Prompt caching cuts repeated-prefix input cost ~10×; if your app re-sends a system prompt every call, enable it. What's NOT included: fine-tuning training/hosting, Provisioned Throughput Units (PTUs — reserved capacity for sub-second latency SLA), content filter add-ons.`,
     );
   }
   if (embM > 0) {
@@ -103,27 +112,40 @@ export function buildAiApplicationBom(
     push(
       `Azure OpenAI — text-embedding-3-small (${embM}M tokens/mo)`, "aoai-embedding-3-small",
       cost, "1M tokens", 0.02, embM,
-      `Embeddings for RAG / vector search. $0.02/1M tokens × ${embM}M.`,
+      `Embeddings for RAG / vector search. $0.02/M tokens × ${embM}M = $${cost.toFixed(2)}. Picked text-embedding-3-small because at 1,536 dimensions it's the cost/quality sweet spot for most RAG. Step up to 3-large ($0.13/M, 3,072 dims) when retrieval precision matters more than cost — typical breakeven is when re-indexing cost is amortised over months of queries. What's NOT included: vector storage in AI Search (priced separately on the index size), re-indexing cost on document updates.`,
     );
   }
   if (search !== "off" && searchParts > 0) {
     const t = AI_SEARCH_HOURLY[search];
     const cost = t.rate * 730 * searchParts;
+    const searchFit: Record<Exclude<NonNullable<AiApplicationParams["aiSearchTier"]>, "off">, string> = {
+      basic: "Basic — 2 GB storage, 50k documents max, 3 indexes. Dev/test or very small RAG apps only.",
+      s1:    "S1 — 25 GB / partition, ~15M docs / partition, 12 indexes. Default for small-to-medium prod RAG. Add partitions to scale storage; add replicas to scale QPS / HA.",
+      s2:    "S2 — 100 GB / partition, ~60M docs, 12 indexes. Step up from S1 when index size exceeds ~20 GB or you need >12 indexes (S2 raises the limit to higher).",
+      s3:    "S3 — 200 GB / partition, ~200M docs. Enterprise scale; usually requires partitioning by tenant or domain.",
+    };
     push(
       `Azure AI Search — ${t.label}${searchParts > 1 ? ` × ${searchParts} partitions` : ""}`,
       `ai-search-${search}-x${searchParts}`,
       cost, "1 Hour", t.rate, 730 * searchParts,
-      `${t.label} ($${t.rate.toFixed(3)}/hr) × ${searchParts} partition${searchParts === 1 ? "" : "s"} × 730 hrs. Vector search included.`,
+      `${t.label} × $${t.rate.toFixed(3)}/hr × 730 × ${searchParts} partition${searchParts === 1 ? "" : "s"} = $${cost.toFixed(2)}. Picked because ${searchFit[search]} Vector search included on all tiers (no extra cost). Add REPLICAS (separate line, not partitions) for HA — 2 replicas gives 99.9 % SLA, 3 gives 99.95 %. Semantic ranking is extra at $1/1k queries. What's NOT included: skillset enrichment (OCR, KeyPhrase via Cognitive Services), semantic ranker over the free quota, integrated data sources.`,
     );
   }
   if (mlHours > 0) {
     const rate = ML_COMPUTE_HOURLY[mlSku];
     const cost = rate * mlHours;
+    const mlFit: Record<NonNullable<AiApplicationParams["mlComputeSku"]>, string> = {
+      D4s_v5:         "D4s_v5 (4 vCPU CPU) — classical ML on tabular data, small-scale training (<1M rows), inference for non-GPU models.",
+      D8s_v5:         "D8s_v5 (8 vCPU CPU) — larger feature engineering, pandas / scikit-learn training, batch inference at modest throughput.",
+      D16s_v5:        "D16s_v5 (16 vCPU CPU) — heavy parallel scikit-learn / XGBoost; if you reach for 16 vCPUs, often a GPU is cheaper per training run.",
+      NC4as_T4_v3:    "NC4as_T4_v3 (1× T4 GPU, 4 vCPU) — entry GPU for inference / fine-tuning small models (BERT-base, ResNet). T4 lacks bf16; not great for LLM fine-tuning.",
+      NC24ads_A100_v4: "NC24ads_A100_v4 (1× A100 80 GB GPU) — LLM fine-tuning, large model training (7B-13B parameter range). Consider Spot instances (~60-80 % discount) for non-interactive training jobs.",
+    };
     push(
       `Azure Machine Learning — Standard_${mlSku} compute (${mlHours}h/mo)`,
       `azureml-${mlSku.toLowerCase()}`,
       cost, "1 Hour", rate, mlHours,
-      `${mlSku} ($${rate.toFixed(3)}/hr) × ${mlHours} hrs. ${mlSku.startsWith("NC") ? "GPU compute — set hours carefully." : "Training / inference baseline."}`,
+      `${mlSku} × $${rate.toFixed(3)}/hr × ${mlHours} hrs = $${cost.toFixed(2)}. Picked because ${mlFit[mlSku]} ${mlSku.startsWith("NC") ? "GPU spend can spiral fast — set hours carefully and enable auto-scale-to-zero on the cluster." : "CPU compute auto-scales to zero between jobs."} What's NOT included: managed online endpoints (separate compute), data egress, model registry storage, prompt-flow tracing ingestion.`,
     );
   }
   if (docPagesK > 0) {
@@ -131,7 +153,7 @@ export function buildAiApplicationBom(
     push(
       `Document Intelligence — prebuilt (${docPagesK}k pages/mo)`, "doc-intelligence",
       cost, "1k pages", 1.5, docPagesK,
-      `Prebuilt model $1.50/1k pages × ${docPagesK}k. Custom training extra.`,
+      `Prebuilt $1.50/1k pages × ${docPagesK}k = $${cost.toFixed(2)}. Picked prebuilt because invoice / receipt / ID / business-card models cover most standard layouts without training. Step up to custom-trained models ($50 training + $50/1k inference) when documents have non-standard layouts; step further to layout-only ($10/1k) when you just need bounding boxes for downstream LLM extraction. What's NOT included: custom model training time, storage of training docs, queue throughput beyond the tier's TPS limit.`,
     );
   }
   return lines;

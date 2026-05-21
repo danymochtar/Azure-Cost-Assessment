@@ -31,6 +31,15 @@ export interface InventoryItem {
    *  hints at active-active / cluster / failover / load-balanced
    *  topology; users can override via the Stage 2 checkbox. */
   hasHa?: boolean;
+  /** Why the AI picked this VM SKU shape (vCPU + memory + family).
+   *  Short string the user can defend to a stakeholder, e.g.
+   *  "8 vCPU + 32 GB → D8s v5; memory/vCPU = 4:1 = general-purpose family." */
+  sizingRationale?: string;
+  /** Why the AI mapped this server to its `recommendedAzureService`.
+   *  Short string explaining the architectural choice, e.g. "Domain
+   *  controller — Azure VM rather than App Service because Active
+   *  Directory needs a domain-joined Windows host." */
+  serviceRationale?: string;
 }
 
 export interface BomLine {
@@ -116,4 +125,8 @@ export interface AssessmentProfile {
   suggestedComponents: string[];
   signals: string[];
   summary: string;
+  /** 1-2 sentences a customer architect could defend: why this pillar
+   *  fits AND why the other pillars don't. Surfaced in Stage 2 next
+   *  to the "Detected by AI" badge. */
+  reasoning?: string;
 }

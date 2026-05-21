@@ -75,6 +75,34 @@ describe("Solution Area pillar baselines", () => {
     });
   });
 
+  describe("Justification — assumption shape regression guard", () => {
+    // Every emitted line on every active pillar must defend its SKU pick.
+    // The "Picked because" + exclusion markers are the contract: if they
+    // regress, the BOM stops being defensible to a customer architect.
+    const samples: Array<[string, () => Array<{ assumption: string; resource: string }>]> = [
+      ["modernization", () => buildModernizationBom("eastus2", "Demo")],
+      ["data-platform", () => buildDataPlatformBom("eastus2", "Demo")],
+      ["ai-application", () => buildAiApplicationBom("eastus2", "Demo")],
+      ["azure-security", () => buildAzureSecurityBom("eastus2", "Demo")],
+      ["hybrid-multicloud", () => buildHybridMulticloudBom([mkVm("v", true)], "eastus2", "Demo")],
+      ["m365-and-others", () => buildM365AndOthersBom("eastus2", "Demo")],
+    ];
+    for (const [name, build] of samples) {
+      it(`${name} — every line says "Picked because" with an exclusions note`, () => {
+        const lines = build();
+        expect(lines.length).toBeGreaterThan(0);
+        for (const l of lines) {
+          // Allow inter-word phrasing: "Picked because", "Picked X because",
+          // "Picked over Y because", etc.
+          expect(l.assumption, `"${l.resource}" assumption missing Picked-because justification`)
+            .toMatch(/Picked\s+(?:[\w-]+\s+){0,6}because/i);
+          expect(l.assumption, `"${l.resource}" assumption missing exclusion / step-guidance marker`)
+            .toMatch(/(NOT included|Includes|Step \w+|Add-on)/i);
+        }
+      });
+    }
+  });
+
   it("every baseline line carries a non-empty assumption (audit trail in Excel)", () => {
     for (const lines of [
       buildModernizationBom("eastus2", "Demo"),
