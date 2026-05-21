@@ -612,6 +612,14 @@ details.notice-pill-expandable > p {
   white-space: pre-wrap;
 }
 
+/* Copyright line shown beneath login / register / forgot cards. */
+.copyright-line {
+  margin-top: 1.25rem;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--text-muted, #64748b);
+}
+
 /* AI spend recap — collapsible breakdown of token usage + USD cost
  * shown at the bottom of Stage 4. */
 .ai-spend-recap {

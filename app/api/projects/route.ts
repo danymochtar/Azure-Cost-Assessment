@@ -25,6 +25,10 @@ async function getOrCreateUserRow(username: string): Promise<string | null> {
 }
 
 const SaveBody = z.object({
+  // When `projectId` is present the server updates that row in place
+  // (after verifying ownership). When absent we create a new row and
+  // auto-suffix the name to keep (user, customer, name) unique.
+  projectId: z.string().uuid().optional(),
   customer: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   region: z.string(),
@@ -154,11 +158,38 @@ export async function POST(req: Request) {
     items: body.items as unknown as Prisma.InputJsonValue,
     lines: body.lines as unknown as Prisma.InputJsonValue,
   };
-  const project = await prisma.project.upsert({
-    where: { userId_customer_name: { userId, customer: body.customer, name: body.name } },
-    create: createData,
-    update: data,
-  });
+  let project;
+  if (body.projectId) {
+    // In-place update — scoped to ownership so a leaked id can't clobber
+    // someone else's row. If the row no longer exists (deleted from the
+    // recap page mid-session) we fall through to the create path below.
+    const owned = await prisma.project.findFirst({
+      where: { id: body.projectId, userId },
+      select: { id: true },
+    });
+    if (owned) {
+      project = await prisma.project.update({ where: { id: body.projectId }, data });
+    }
+  }
+  if (!project) {
+    // Auto-suffix name on collision. Walk " 2", " 3", … until the
+    // (userId, customer, name) tuple is free, matching the user's
+    // expectation of "same customer + same project → keep both".
+    const baseName = body.name;
+    const existing = await prisma.project.findMany({
+      where: { userId, customer: body.customer, name: { startsWith: baseName } },
+      select: { name: true },
+    });
+    const taken = new Set(existing.map((r) => r.name));
+    let unique = baseName;
+    let suffix = 2;
+    while (taken.has(unique)) {
+      unique = `${baseName} ${suffix}`;
+      suffix += 1;
+    }
+    createData.name = unique;
+    project = await prisma.project.create({ data: createData });
+  }
 
   return NextResponse.json({
     ok: true,

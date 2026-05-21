@@ -119,6 +119,9 @@ export default function LoginForm({ next }: { next: string }) {
           Session signed with <code>BETTER_AUTH_SECRET</code> · 30-day cookie
         </div>
       </div>
+      <p className="copyright-line">
+        © {new Date().getFullYear()} Dany Mochtar · Azure Solution Lead @ Noventiq Malaysia
+      </p>
     </div>
   );
 }
