@@ -7,12 +7,12 @@ import {
   type LandingZoneTier,
 } from "@/lib/pillars/landing-zone";
 import { buildBcdrBom } from "@/lib/pillars/bcdr";
-import { buildModernizationBom } from "@/lib/pillars/modernization";
-import { buildDataPlatformBom } from "@/lib/pillars/data-platform";
-import { buildAiApplicationBom } from "@/lib/pillars/ai-application";
-import { buildAzureSecurityBom } from "@/lib/pillars/azure-security";
-import { buildHybridMulticloudBom } from "@/lib/pillars/hybrid-multicloud";
-import { buildM365AndOthersBom } from "@/lib/pillars/m365-and-others";
+import { buildModernizationBom, type ModernizationParams } from "@/lib/pillars/modernization";
+import { buildDataPlatformBom, type DataPlatformParams } from "@/lib/pillars/data-platform";
+import { buildAiApplicationBom, type AiApplicationParams } from "@/lib/pillars/ai-application";
+import { buildAzureSecurityBom, type AzureSecurityParams } from "@/lib/pillars/azure-security";
+import { buildHybridMulticloudBom, type HybridMulticloudParams } from "@/lib/pillars/hybrid-multicloud";
+import { buildM365AndOthersBom, type M365AndOthersParams } from "@/lib/pillars/m365-and-others";
 import type { InventoryItem, Notice } from "@/lib/models";
 import { RetailPricesClient } from "@/lib/pricing/retail";
 
@@ -57,6 +57,16 @@ const OptionsSchema = z.object({
   // inventory; the others emit pillar-specific baseline BOMs only when
   // ticked in Stage 2.
   activePillars: z.array(z.string()).default([]),
+  // Per-pillar use-case parameters. Each pillar reads only its own
+  // sub-object; missing fields fall back to the module's defaults.
+  pillarParams: z.object({
+    modernization: z.record(z.string(), z.unknown()).optional(),
+    dataPlatform: z.record(z.string(), z.unknown()).optional(),
+    aiApplication: z.record(z.string(), z.unknown()).optional(),
+    azureSecurity: z.record(z.string(), z.unknown()).optional(),
+    hybridMulticloud: z.record(z.string(), z.unknown()).optional(),
+    m365AndOthers: z.record(z.string(), z.unknown()).optional(),
+  }).optional(),
   // When `landingZoneComponents` is present (length > 0) the route uses
   // the explicit id list instead of the tier preset — that's how the
   // "Customize components" UI surfaces its picks.
@@ -117,13 +127,14 @@ export async function POST(req: Request) {
     const active = new Set(body.options.activePillars);
     const region = body.options.region;
     const appName = body.options.appName;
+    const pp = body.options.pillarParams ?? {};
     const pillarLines: typeof workloadLines = [];
-    if (active.has("infra_modernization")) pillarLines.push(...buildModernizationBom(region, appName));
-    if (active.has("data_platform"))       pillarLines.push(...buildDataPlatformBom(region, appName));
-    if (active.has("ai_application"))      pillarLines.push(...buildAiApplicationBom(region, appName));
-    if (active.has("azure_security"))      pillarLines.push(...buildAzureSecurityBom(region, appName));
-    if (active.has("hybrid_multicloud"))   pillarLines.push(...buildHybridMulticloudBom(body.items as InventoryItem[], region, appName));
-    if (active.has("m365_and_others"))     pillarLines.push(...buildM365AndOthersBom(region, appName));
+    if (active.has("infra_modernization")) pillarLines.push(...buildModernizationBom(region, appName, pp.modernization as ModernizationParams));
+    if (active.has("data_platform"))       pillarLines.push(...buildDataPlatformBom(region, appName, pp.dataPlatform as DataPlatformParams));
+    if (active.has("ai_application"))      pillarLines.push(...buildAiApplicationBom(region, appName, pp.aiApplication as AiApplicationParams));
+    if (active.has("azure_security"))      pillarLines.push(...buildAzureSecurityBom(region, appName, pp.azureSecurity as AzureSecurityParams));
+    if (active.has("hybrid_multicloud"))   pillarLines.push(...buildHybridMulticloudBom(body.items as InventoryItem[], region, appName, pp.hybridMulticloud as HybridMulticloudParams));
+    if (active.has("m365_and_others"))     pillarLines.push(...buildM365AndOthersBom(region, appName, pp.m365AndOthers as M365AndOthersParams));
 
     const lines = [...lzLines, ...workloadLines, ...pillarLines, ...bcdrLines];
 

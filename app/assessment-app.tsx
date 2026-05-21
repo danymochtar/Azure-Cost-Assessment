@@ -240,6 +240,176 @@ function NoticePill({ n }: { n: Notice }) {
   );
 }
 
+// Per-pillar use-case parameter form. Each pillar gets its own
+// collapsible <details> with a small set of numeric / select inputs
+// keyed off the pillar's `*Params` interface. Empty values fall back
+// to the module defaults server-side.
+interface PillarFieldSpec {
+  key: string;
+  label: string;
+  kind: "number" | "select";
+  options?: { value: string; label: string }[];
+  defaultValue: number | string;
+  hint?: string;
+  step?: number;
+  min?: number;
+}
+const PILLAR_FORMS: Record<string, { pid: string; label: string; fields: PillarFieldSpec[] }> = {
+  infra_modernization: {
+    pid: "modernization",
+    label: "Infra Modernization",
+    fields: [
+      { key: "appServicePlan", label: "App Service plan", kind: "select", defaultValue: "P1v3",
+        options: [{value:"P0v3",label:"P0v3"},{value:"P1v3",label:"P1v3"},{value:"P2v3",label:"P2v3"},{value:"P3v3",label:"P3v3"}] },
+      { key: "appServiceInstances", label: "App Service instances", kind: "number", defaultValue: 3, min: 0 },
+      { key: "aksNodeSku", label: "AKS worker SKU", kind: "select", defaultValue: "D4s_v5",
+        options: [{value:"D2s_v5",label:"D2s_v5"},{value:"D4s_v5",label:"D4s_v5"},{value:"D8s_v5",label:"D8s_v5"},{value:"D16s_v5",label:"D16s_v5"}] },
+      { key: "aksNodeCount", label: "AKS worker count", kind: "number", defaultValue: 3, min: 0 },
+      { key: "apimTier", label: "APIM tier", kind: "select", defaultValue: "developer",
+        options: [{value:"off",label:"off"},{value:"developer",label:"Developer"},{value:"basic_v2",label:"Basic v2"},{value:"standard_v2",label:"Standard v2"},{value:"premium_v2",label:"Premium v2"}] },
+      { key: "frontDoorTier", label: "Front Door tier", kind: "select", defaultValue: "standard",
+        options: [{value:"off",label:"off"},{value:"standard",label:"Standard"},{value:"premium",label:"Premium"}] },
+      { key: "acrTier", label: "ACR tier", kind: "select", defaultValue: "standard",
+        options: [{value:"off",label:"off"},{value:"basic",label:"Basic"},{value:"standard",label:"Standard"},{value:"premium",label:"Premium"}] },
+    ],
+  },
+  data_platform: {
+    pid: "dataPlatform",
+    label: "Data Platform",
+    fields: [
+      { key: "fabricCapacity", label: "Microsoft Fabric capacity", kind: "select", defaultValue: "F2",
+        options: ["off","F2","F4","F8","F16","F32","F64","F128","F256","F512"].map((v)=>({value:v,label:v})) },
+      { key: "sqlDbTier", label: "SQL DB tier", kind: "select", defaultValue: "gp",
+        options: [{value:"off",label:"off"},{value:"gp",label:"General Purpose"},{value:"bc",label:"Business Critical"}] },
+      { key: "sqlDbVcores", label: "SQL DB vCores", kind: "number", defaultValue: 2, min: 0 },
+      { key: "cosmosMillionRuPerMonth", label: "Cosmos RU/mo (millions)", kind: "number", defaultValue: 100, min: 0 },
+      { key: "adlsGb", label: "ADLS Gen2 hot tier (GB)", kind: "number", defaultValue: 1000, min: 0 },
+      { key: "eventHubsTu", label: "Event Hubs TUs", kind: "number", defaultValue: 1, min: 0 },
+      { key: "redisTier", label: "Redis tier", kind: "select", defaultValue: "standard_c1",
+        options: [{value:"off",label:"off"},{value:"basic_c0",label:"Basic C0"},{value:"basic_c1",label:"Basic C1"},{value:"standard_c1",label:"Standard C1"},{value:"premium_p1",label:"Premium P1"}] },
+    ],
+  },
+  ai_application: {
+    pid: "aiApplication",
+    label: "AI Application",
+    fields: [
+      { key: "openAiModel", label: "Azure OpenAI model", kind: "select", defaultValue: "gpt-4o",
+        options: ["gpt-4o","gpt-4o-mini","gpt-4.1","gpt-4.1-mini","o1","o1-mini","o3-mini"].map((v)=>({value:v,label:v})) },
+      { key: "openAiInputTokensMillions", label: "Input tokens (millions/mo)", kind: "number", defaultValue: 5, min: 0, step: 0.5 },
+      { key: "openAiOutputTokensMillions", label: "Output tokens (millions/mo)", kind: "number", defaultValue: 1, min: 0, step: 0.5 },
+      { key: "openAiCachedInputTokensMillions", label: "Cached input tokens (millions/mo)", kind: "number", defaultValue: 0, min: 0, step: 0.5 },
+      { key: "embeddingsTokensMillions", label: "Embeddings tokens (millions/mo)", kind: "number", defaultValue: 50, min: 0, step: 1 },
+      { key: "aiSearchTier", label: "AI Search tier", kind: "select", defaultValue: "s1",
+        options: [{value:"off",label:"off"},{value:"basic",label:"Basic"},{value:"s1",label:"Standard S1"},{value:"s2",label:"Standard S2"},{value:"s3",label:"Standard S3"}] },
+      { key: "aiSearchPartitions", label: "AI Search partitions", kind: "number", defaultValue: 1, min: 0 },
+      { key: "mlComputeSku", label: "Azure ML compute SKU", kind: "select", defaultValue: "D8s_v5",
+        options: ["D4s_v5","D8s_v5","D16s_v5","NC4as_T4_v3","NC24ads_A100_v4"].map((v)=>({value:v,label:v})) },
+      { key: "mlComputeHoursMonth", label: "ML compute hours/mo", kind: "number", defaultValue: 120, min: 0 },
+      { key: "docIntelligencePagesK", label: "Document Intelligence pages (k/mo)", kind: "number", defaultValue: 50, min: 0 },
+    ],
+  },
+  azure_security: {
+    pid: "azureSecurity",
+    label: "Azure Security",
+    fields: [
+      { key: "entraIdTier", label: "Entra ID tier", kind: "select", defaultValue: "p2",
+        options: [{value:"off",label:"off"},{value:"p1",label:"P1"},{value:"p2",label:"P2"}] },
+      { key: "entraIdUsers", label: "Entra ID licensed users", kind: "number", defaultValue: 50, min: 0 },
+      { key: "purviewCapacityUnits", label: "Purview capacity units", kind: "number", defaultValue: 1, min: 0 },
+      { key: "wafPolicyCount", label: "WAF policy count", kind: "number", defaultValue: 1, min: 0 },
+      { key: "privateEndpointCount", label: "Private endpoints", kind: "number", defaultValue: 5, min: 0 },
+    ],
+  },
+  hybrid_multicloud: {
+    pid: "hybridMulticloud",
+    label: "Hybrid Multicloud",
+    fields: [
+      { key: "multicloudServerCount", label: "AWS/GCP servers (Arc-protected)", kind: "number", defaultValue: 5, min: 0 },
+      { key: "arcK8sClusterCount", label: "Arc K8s clusters", kind: "number", defaultValue: 2, min: 0 },
+      { key: "arcSqlVcoreCount", label: "Arc SQL vCores", kind: "number", defaultValue: 1, min: 0 },
+      { key: "arcLogIngestionGbMonth", label: "LA ingestion from Arc (GB/mo)", kind: "number", defaultValue: 100, min: 0 },
+    ],
+  },
+  m365_and_others: {
+    pid: "m365AndOthers",
+    label: "M365 & Others",
+    fields: [
+      { key: "m365BackupUsers", label: "M365 Backup users", kind: "number", defaultValue: 100, min: 0 },
+      { key: "m365ArchiveGb", label: "M365 Archive (GB)", kind: "number", defaultValue: 1000, min: 0 },
+      { key: "sharePointAiBuilderMillionsCredits", label: "AI Builder credits (millions)", kind: "number", defaultValue: 1, min: 0, step: 0.1 },
+      { key: "copilotStudioPackCount", label: "Copilot Studio packs (25k msgs each)", kind: "number", defaultValue: 1, min: 0 },
+    ],
+  },
+};
+
+function PillarParametersForm({
+  activePillars,
+  params,
+  onChange,
+}: {
+  activePillars: Set<string>;
+  params: Record<string, Record<string, unknown>>;
+  onChange: (pid: string, key: string, value: unknown) => void;
+}) {
+  const order: string[] = [
+    "infra_modernization", "data_platform", "ai_application",
+    "azure_security", "hybrid_multicloud", "m365_and_others",
+  ];
+  return (
+    <div className="card" style={{ marginTop: "1rem", padding: "1rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
+        <Settings2 size={16} />
+        <h3 style={{ margin: 0, fontSize: "1rem" }}>Pillar use-case parameters</h3>
+      </div>
+      <p className="helper" style={{ marginTop: 0 }}>
+        Per-pillar inputs drive the BOM lines. Defaults preserve the baseline if you leave them alone.
+      </p>
+      {order.filter((pk) => activePillars.has(pk)).map((pk) => {
+        const spec = PILLAR_FORMS[pk];
+        if (!spec) return null;
+        const v = params[spec.pid] ?? {};
+        return (
+          <details key={pk} className="category-group" open>
+            <summary>
+              <span className="cat-name">{spec.label}</span>
+            </summary>
+            <div className="row cols-3" style={{ marginTop: "0.5rem" }}>
+              {spec.fields.map((f) => {
+                const current = v[f.key] ?? f.defaultValue;
+                return (
+                  <div key={f.key} className="field">
+                    <label className="field-label" htmlFor={`pp-${spec.pid}-${f.key}`}>{f.label}</label>
+                    {f.kind === "select" && f.options ? (
+                      <select
+                        id={`pp-${spec.pid}-${f.key}`}
+                        value={String(current)}
+                        onChange={(e) => onChange(spec.pid, f.key, e.target.value)}
+                      >
+                        {f.options.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        id={`pp-${spec.pid}-${f.key}`}
+                        type="number"
+                        min={f.min}
+                        step={f.step ?? 1}
+                        value={Number(current)}
+                        onChange={(e) => onChange(spec.pid, f.key, Number(e.target.value))}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
 // CAF Landing Zone component checklist. Grouped by category, each row
 // a checkbox + label + small description. Used by Stage 3 when the user
 // flips "Customize components" on.
@@ -391,6 +561,10 @@ export default function AssessmentApp({ user }: { user: string }) {
   // pricing adds protected-instance license + replica disk storage +
   // cache storage account lines for every VM in the inventory.
   const [enableBcdr, setEnableBcdr] = useState(false);
+  // Per-pillar use-case parameters (OpenAI tokens, Fabric CU, Entra
+  // users, etc.). One sub-object per pillar id; the API merges with
+  // module defaults so empty == "use the baseline".
+  const [pillarParams, setPillarParams] = useState<Record<string, Record<string, unknown>>>({});
   // Safety margin is opt-in. When `applyHeadroom` is false we pass 1.0
   // (exact 1:1 sizing) to the API; only when the checkbox is on does
   // the `headroom` value get used.
@@ -579,6 +753,7 @@ export default function AssessmentApp({ user }: { user: string }) {
     setLzCustomize(false);
     setLzComponents(new Set());
     setEnableBcdr(false);
+    setPillarParams({});
   }
 
   async function signOut() {
@@ -632,6 +807,7 @@ export default function AssessmentApp({ user }: { user: string }) {
         landingZoneTier?: string;
         landingZoneComponents?: string[] | null;
         enableBcdr?: boolean;
+        pillarParams?: Record<string, Record<string, unknown>> | null;
         activePillars: string[]; items: InventoryItem[]; lines: BomLine[];
       } };
       const p = data.project;
@@ -649,6 +825,7 @@ export default function AssessmentApp({ user }: { user: string }) {
       setHeadroom(p.headroom);
       setLandingZoneTier((p.landingZoneTier as LandingZoneTier | undefined) ?? "none");
       setEnableBcdr(!!p.enableBcdr);
+      setPillarParams((p.pillarParams as Record<string, Record<string, unknown>>) ?? {});
       if (p.landingZoneComponents && p.landingZoneComponents.length > 0) {
         setLzCustomize(true);
         setLzComponents(new Set(p.landingZoneComponents));
@@ -761,6 +938,7 @@ export default function AssessmentApp({ user }: { user: string }) {
             landingZoneComponents: lzCustomize ? Array.from(lzComponents) : undefined,
             enableBcdr,
             activePillars: Array.from(activePillars),
+            pillarParams,
           },
         }),
       });
@@ -797,6 +975,7 @@ export default function AssessmentApp({ user }: { user: string }) {
           applyHeadroom, headroom, landingZoneTier,
           landingZoneComponents: lzCustomize ? Array.from(lzComponents) : undefined,
           enableBcdr,
+          pillarParams,
           activePillars: Array.from(activePillars),
           items,
           lines: linesOverride ?? lines,
@@ -1594,6 +1773,22 @@ export default function AssessmentApp({ user }: { user: string }) {
             )}
           </div>
         </div>
+
+        {/* Use-case parameters per active pillar — only renders for the
+            pillars actually ticked in Stage 2. Defaults preserve the
+            current behaviour; tune to refine pricing without code. */}
+        {Array.from(activePillars).filter((pk) => pk !== "infra_lift_shift").length > 0 && (
+          <PillarParametersForm
+            activePillars={activePillars}
+            params={pillarParams}
+            onChange={(pid, key, value) => {
+              setPillarParams((prev) => ({
+                ...prev,
+                [pid]: { ...(prev[pid] ?? {}), [key]: value },
+              }));
+            }}
+          />
+        )}
 
         {/* Stage 3 CTA — runs pricing and reveals Stage 4. */}
         <div style={{ marginTop: "1.25rem" }}>

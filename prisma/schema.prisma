@@ -47,6 +47,7 @@ model Project {
   landingZoneComponents Json? @map("landing_zone_components")
   landingZoneParams     Json? @map("landing_zone_params")
   enableBcdr      Boolean  @default(false) @map("enable_bcdr")
+  pillarParams    Json?    @map("pillar_params")
   activePillars   Json     @default("[]") @map("active_pillars")
   items           Json     @default("[]")
   lines           Json     @default("[]")

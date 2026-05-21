@@ -41,7 +41,38 @@ describe("Solution Area pillar baselines", () => {
     );
     const arcSql = lines.find((l) => l.resource.startsWith("Arc-enabled SQL Server PAYG"));
     expect(arcSql).toBeDefined();
-    expect(arcSql!.resource).toContain("2 servers");
+    expect(arcSql!.resource).toContain("2 vCores");
+  });
+
+  describe("Parametric pricing", () => {
+    it("AI Application scales linearly with OpenAI token volume", () => {
+      const lo = buildAiApplicationBom("eastus2", "Demo", { openAiInputTokensMillions: 1, openAiOutputTokensMillions: 0, embeddingsTokensMillions: 0, aiSearchTier: "off", mlComputeHoursMonth: 0, docIntelligencePagesK: 0 });
+      const hi = buildAiApplicationBom("eastus2", "Demo", { openAiInputTokensMillions: 10, openAiOutputTokensMillions: 0, embeddingsTokensMillions: 0, aiSearchTier: "off", mlComputeHoursMonth: 0, docIntelligencePagesK: 0 });
+      const sum = (xs: { monthlyCost: number }[]) => xs.reduce((s,l)=>s+l.monthlyCost,0);
+      expect(sum(hi)).toBeCloseTo(sum(lo) * 10, 2);
+    });
+
+    it("Data Platform Fabric F64 costs ~32× more than F2", () => {
+      const f2 = buildDataPlatformBom("eastus2", "Demo", { fabricCapacity: "F2", sqlDbTier: "off", cosmosMillionRuPerMonth: 0, adlsGb: 0, dataFactoryUsd: 0, eventHubsTu: 0, redisTier: "off" });
+      const f64 = buildDataPlatformBom("eastus2", "Demo", { fabricCapacity: "F64", sqlDbTier: "off", cosmosMillionRuPerMonth: 0, adlsGb: 0, dataFactoryUsd: 0, eventHubsTu: 0, redisTier: "off" });
+      expect(f64[0].monthlyCost).toBeCloseTo(f2[0].monthlyCost * 32, 0);
+    });
+
+    it("Azure Security drops Entra line when tier is 'off'", () => {
+      const off = buildAzureSecurityBom("eastus2", "Demo", { entraIdTier: "off" });
+      expect(off.find((l) => l.resource.startsWith("Microsoft Entra ID"))).toBeUndefined();
+    });
+
+    it("Modernization drops Front Door when tier is 'off'", () => {
+      const off = buildModernizationBom("eastus2", "Demo", { frontDoorTier: "off" });
+      expect(off.find((l) => l.resource.startsWith("Azure Front Door"))).toBeUndefined();
+    });
+
+    it("M365 & Others scales linearly with backup user count", () => {
+      const ten  = buildM365AndOthersBom("eastus2","Demo",{ m365BackupUsers: 10, m365ArchiveGb: 0, sharePointAiBuilderMillionsCredits: 0, copilotStudioPackCount: 0 });
+      const hund = buildM365AndOthersBom("eastus2","Demo",{ m365BackupUsers: 100, m365ArchiveGb: 0, sharePointAiBuilderMillionsCredits: 0, copilotStudioPackCount: 0 });
+      expect(hund[0].monthlyCost).toBeCloseTo(ten[0].monthlyCost * 10, 2);
+    });
   });
 
   it("every baseline line carries a non-empty assumption (audit trail in Excel)", () => {

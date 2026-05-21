@@ -1,86 +1,129 @@
-// Data Platform baseline pricing.
+// Data Platform parametric pricing.
 //
-// Covers the common Azure data stack: SQL DB / MI, Cosmos, ADLS Gen2,
-// Data Factory, Event Hubs, Microsoft Fabric. East US 2 USD list rates,
-// late 2025. Databricks deliberately excluded — too workload-dependent
-// (DBU pricing × node hours), customers should layer it on top.
+// Drives the BOM off use-case knobs: Fabric capacity SKU, SQL vCore
+// count, Cosmos RU volume, ADLS Gen2 GB, ADF DIU-hours, Event Hubs TU
+// count, Redis tier. East US 2 USD list rates, late 2025.
 
 import { type BomLine, emptyBomLine } from "../models";
 
-interface Preset {
-  resource: string;
-  sku: string;
-  monthlyCost: number;
-  unit: string;
-  unitPrice: number;
-  quantity: number;
-  assumption: string;
+export interface DataPlatformParams {
+  fabricCapacity?: "off" | "F2" | "F4" | "F8" | "F16" | "F32" | "F64" | "F128" | "F256" | "F512";
+  /** Azure SQL DB sizing. tier=off drops the line. */
+  sqlDbTier?: "off" | "gp" | "bc";
+  sqlDbVcores?: number;
+  /** Cosmos DB RU volume per month (millions). 0 drops the line. */
+  cosmosMillionRuPerMonth?: number;
+  /** ADLS Gen2 hot tier storage in GB. 0 drops the line. */
+  adlsGb?: number;
+  /** Data Factory monthly $ baseline (orchestration + DIU + IR). 0 drops the line. */
+  dataFactoryUsd?: number;
+  /** Event Hubs Standard Throughput Unit count. 0 drops the line. */
+  eventHubsTu?: number;
+  /** Redis Cache tier. "off" drops the line. */
+  redisTier?: "off" | "basic_c0" | "basic_c1" | "standard_c1" | "premium_p1";
 }
 
-const PRESETS: Preset[] = [
-  {
-    resource: "Azure SQL Database — General Purpose, Gen5, 2 vCore",
-    sku: "azsql-gp-gen5-2vcore",
-    monthlyCost: 371.10, unit: "1 Hour", unitPrice: 0.508, quantity: 730,
-    assumption: "GP 2 vCore × $0.508/hr × 730 (includes 7-day PITR). Add storage at $0.115/GB/mo. Hyperscale / Business Critical price much higher.",
-  },
-  {
-    resource: "Azure Cosmos DB — Serverless (100k RU/mo baseline)",
-    sku: "cosmos-serverless",
-    monthlyCost: 28.00, unit: "1M RU", unitPrice: 0.28, quantity: 100,
-    assumption: "Serverless $0.28 per 1M RU × 100M RU/mo baseline + $0.25/GB storage (~$2.50 for 10 GB). Provisioned throughput priced separately.",
-  },
-  {
-    resource: "ADLS Gen2 — Hot tier × 1 TB",
-    sku: "adls-gen2-hot-1tb",
-    monthlyCost: 18.40, unit: "1 GB", unitPrice: 0.0184, quantity: 1000,
-    assumption: "Hot tier $0.0184/GB/mo × 1,000 GB. Add transaction charges ($0.0044 per 10k read ops, $0.055 per 10k write ops).",
-  },
-  {
-    resource: "Microsoft Fabric — F2 capacity",
-    sku: "fabric-f2",
-    monthlyCost: 262.80, unit: "1 Hour", unitPrice: 0.360, quantity: 730,
-    assumption: "F2 ($0.36/hr) reserved capacity supports Power BI, Synapse engines, Data Factory, Eventstream. Scale to F4/F8 for production.",
-  },
-  {
-    resource: "Azure Data Factory — 1,000 orchestration runs + 50 DIU-hours",
-    sku: "adf-baseline",
-    monthlyCost: 27.50, unit: "1/Month", unitPrice: 27.50, quantity: 1,
-    assumption: "$1/1,000 orchestration runs ($1) + 50 × $0.25/DIU-hr ($12.50) + 50 × $0.28/hr SSIS or self-hosted IR (~$14). Tune to actual ingest cadence.",
-  },
-  {
-    resource: "Event Hubs — Standard 1 Throughput Unit",
-    sku: "event-hubs-std-1tu",
-    monthlyCost: 21.90, unit: "1 Hour", unitPrice: 0.03, quantity: 730,
-    assumption: "Standard 1 TU ($0.03/hr × 730). 1 TU = 1 MB/s ingress, 2 MB/s egress, 84 GB capture. Premium tier from $0.50/PU/hr.",
-  },
-  {
-    resource: "Azure Cache for Redis — Standard C1 (1 GB)",
-    sku: "redis-std-c1",
-    monthlyCost: 89.00, unit: "1 Hour", unitPrice: 0.122, quantity: 730,
-    assumption: "Standard C1 1 GB ($0.122/hr × 730) replicated. Step up to Premium for clustering / Active geo-replication.",
-  },
-];
+const FABRIC_HOURLY: Record<Exclude<NonNullable<DataPlatformParams["fabricCapacity"]>, "off">, number> = {
+  F2: 0.36, F4: 0.72, F8: 1.44, F16: 2.88, F32: 5.76, F64: 11.52, F128: 23.04, F256: 46.08, F512: 92.16,
+};
+const REDIS: Record<Exclude<NonNullable<DataPlatformParams["redisTier"]>, "off">, { rate: number; label: string }> = {
+  basic_c0:    { rate: 0.017, label: "Basic C0 (250 MB)" },
+  basic_c1:    { rate: 0.061, label: "Basic C1 (1 GB)" },
+  standard_c1: { rate: 0.122, label: "Standard C1 (1 GB)" },
+  premium_p1:  { rate: 0.413, label: "Premium P1 (6 GB)" },
+};
 
-export function buildDataPlatformBom(region: string, appName: string): BomLine[] {
-  const tag = "(Data Platform baseline — East US 2; tune per workload)";
-  return PRESETS.map((p) => ({
-    ...emptyBomLine(),
-    category: "Data Platform",
-    resource: p.resource,
-    sku: p.sku,
-    meter: p.sku,
-    region,
-    quantity: p.quantity,
-    unit: p.unit,
-    unitPrice: p.unitPrice,
-    monthlyCost: Math.round(p.monthlyCost * 100) / 100,
-    currency: "USD",
-    source: "data-platform-baseline",
-    serviceName: "Data Platform",
-    customName: appName ? `${appName}-data` : "Data Platform",
-    resourceCount: 1,
-    billingTerm: "PAYG",
-    assumption: `${p.assumption} ${tag}`,
-  }));
+export function buildDataPlatformBom(
+  region: string,
+  appName: string,
+  params: DataPlatformParams = {},
+): BomLine[] {
+  const fabric = params.fabricCapacity ?? "F2";
+  const sqlTier = params.sqlDbTier ?? "gp";
+  const sqlVcores = params.sqlDbVcores ?? 2;
+  const cosmosMRu = params.cosmosMillionRuPerMonth ?? 100;
+  const adlsGb = params.adlsGb ?? 1000;
+  const adfUsd = params.dataFactoryUsd ?? 27.5;
+  const ehTu = params.eventHubsTu ?? 1;
+  const redis = params.redisTier ?? "standard_c1";
+
+  const lines: BomLine[] = [];
+  const tag = "(Data Platform — East US 2; tune per workload)";
+  const push = (
+    resource: string, sku: string, monthlyCost: number,
+    unit: string, unitPrice: number, quantity: number, assumption: string,
+  ) => {
+    lines.push({
+      ...emptyBomLine(),
+      category: "Data Platform", resource, sku, meter: sku, region,
+      quantity, unit, unitPrice,
+      monthlyCost: Math.round(monthlyCost * 100) / 100,
+      currency: "USD", source: "data-platform-baseline",
+      serviceName: "Data Platform",
+      customName: appName ? `${appName}-data` : "Data Platform",
+      resourceCount: 1, billingTerm: "PAYG",
+      assumption: `${assumption} ${tag}`,
+    });
+  };
+
+  if (fabric !== "off") {
+    const rate = FABRIC_HOURLY[fabric];
+    push(
+      `Microsoft Fabric — ${fabric} capacity`, `fabric-${fabric.toLowerCase()}`,
+      rate * 730, "1 Hour", rate, 730,
+      `${fabric} ($${rate.toFixed(2)}/hr × 730) supports Power BI, Synapse engines, Data Factory, Eventstream.`,
+    );
+  }
+  if (sqlTier !== "off" && sqlVcores > 0) {
+    const gpHourlyPerVcore = 0.254;
+    const bcHourlyPerVcore = 0.684;
+    const rate = (sqlTier === "bc" ? bcHourlyPerVcore : gpHourlyPerVcore) * sqlVcores;
+    const tierLabel = sqlTier === "bc" ? "Business Critical" : "General Purpose";
+    push(
+      `Azure SQL Database — ${tierLabel}, Gen5, ${sqlVcores} vCore`,
+      `azsql-${sqlTier}-gen5-${sqlVcores}vc`,
+      rate * 730, "1 Hour", rate, 730,
+      `${tierLabel} Gen5 × ${sqlVcores} vCore × $${rate.toFixed(3)}/hr × 730. Storage $0.115/GB extra.`,
+    );
+  }
+  if (cosmosMRu > 0) {
+    const cost = cosmosMRu * 0.28;
+    push(
+      `Azure Cosmos DB — Serverless (${cosmosMRu}M RU/mo)`, "cosmos-serverless",
+      cost, "1M RU", 0.28, cosmosMRu,
+      `Serverless $0.28/M RU × ${cosmosMRu}M + $0.25/GB storage (excluded).`,
+    );
+  }
+  if (adlsGb > 0) {
+    const cost = adlsGb * 0.0184;
+    push(
+      `ADLS Gen2 — Hot tier × ${adlsGb.toLocaleString()} GB`, "adls-gen2-hot",
+      cost, "1 GB", 0.0184, adlsGb,
+      `Hot tier $0.0184/GB × ${adlsGb} GB. Transactions $0.0044/10k reads, $0.055/10k writes.`,
+    );
+  }
+  if (adfUsd > 0) {
+    push(
+      "Azure Data Factory — orchestration + DIU-hours baseline", "adf-baseline",
+      adfUsd, "1/Month", adfUsd, 1,
+      `Mixed orchestration runs + DIU-hours + IR baseline = $${adfUsd.toFixed(2)}/mo.`,
+    );
+  }
+  if (ehTu > 0) {
+    const cost = ehTu * 0.03 * 730;
+    push(
+      `Event Hubs — Standard ${ehTu} Throughput Unit${ehTu === 1 ? "" : "s"}`, `event-hubs-std-${ehTu}tu`,
+      cost, "1 Hour", 0.03, 730 * ehTu,
+      `Standard ${ehTu} TU × $0.03/hr × 730. 1 TU = 1 MB/s ingress, 2 MB/s egress.`,
+    );
+  }
+  if (redis !== "off") {
+    const t = REDIS[redis];
+    push(
+      `Azure Cache for Redis — ${t.label}`, `redis-${redis}`,
+      t.rate * 730, "1 Hour", t.rate, 730,
+      `${t.label} ($${t.rate.toFixed(3)}/hr × 730).`,
+    );
+  }
+  return lines;
 }
