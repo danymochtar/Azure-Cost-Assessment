@@ -16,6 +16,21 @@ export interface M365AndOthersParams {
   copilotStudioPackCount?: number;
 }
 
+/**
+ * Derive M365AndOthersParams defaults from classifier signals so a
+ * pure-Azure workload doesn't ship $350 of M365 Backup by default.
+ */
+export function recommendM365AndOthersParams(signals: Iterable<string>): M365AndOthersParams {
+  const s = new Set(signals);
+  return {
+    m365BackupUsers: s.has("m365_backup") ? 100 : 0,
+    m365ArchiveGb: s.has("m365_archive") ? 1000 : 0,
+    sharePointAiBuilderMillionsCredits: s.has("sharepoint_premium") ? 1 : 0,
+    copilotStudioPackCount:
+      (s.has("copilot_studio_pack_25k") || s.has("copilot_studio_payg")) ? 1 : 0,
+  };
+}
+
 export function buildM365AndOthersBom(
   region: string,
   appName: string,

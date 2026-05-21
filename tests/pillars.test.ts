@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildModernizationBom } from "@/lib/pillars/modernization";
-import { buildDataPlatformBom } from "@/lib/pillars/data-platform";
-import { buildAiApplicationBom } from "@/lib/pillars/ai-application";
-import { buildAzureSecurityBom } from "@/lib/pillars/azure-security";
-import { buildHybridMulticloudBom } from "@/lib/pillars/hybrid-multicloud";
-import { buildM365AndOthersBom } from "@/lib/pillars/m365-and-others";
+import { buildModernizationBom, recommendModernizationParams } from "@/lib/pillars/modernization";
+import { buildDataPlatformBom, recommendDataPlatformParams } from "@/lib/pillars/data-platform";
+import { buildAiApplicationBom, recommendAiApplicationParams } from "@/lib/pillars/ai-application";
+import { buildAzureSecurityBom, recommendAzureSecurityParams } from "@/lib/pillars/azure-security";
+import { buildHybridMulticloudBom, recommendHybridMulticloudParams } from "@/lib/pillars/hybrid-multicloud";
+import { buildM365AndOthersBom, recommendM365AndOthersParams } from "@/lib/pillars/m365-and-others";
 import type { InventoryItem } from "@/lib/models";
 
 function mkVm(name: string, hasDb = false): InventoryItem {
@@ -117,5 +117,76 @@ describe("Solution Area pillar baselines", () => {
         expect(l.sku).toBeTruthy();
       }
     }
+  });
+
+  describe("Signal-driven parameter defaults", () => {
+    it("Modernization with no container signal → AKS + ACR + Container Apps all zero", () => {
+      const p = recommendModernizationParams(["app_service"]);
+      expect(p.aksNodeCount).toBe(0);
+      expect(p.acrTier).toBe("off");
+      expect(p.containerAppsBaselineUsd).toBe(0);
+      // App Service still seeded since the signal matched.
+      expect(p.appServiceInstances).toBe(3);
+
+      const lines = buildModernizationBom("eastus2", "Demo", p);
+      expect(lines.find((l) => l.resource.startsWith("AKS"))).toBeUndefined();
+      expect(lines.find((l) => l.resource.includes("Container Registry"))).toBeUndefined();
+      expect(lines.find((l) => l.resource.startsWith("App Service Plan"))).toBeDefined();
+    });
+
+    it("Modernization with aks signal → AKS + ACR seeded", () => {
+      const p = recommendModernizationParams(["aks"]);
+      expect(p.aksNodeCount).toBe(3);
+      expect(p.acrTier).toBe("standard");
+    });
+
+    it("Data Platform with no analytics signal → Fabric / SQL / Cosmos all off", () => {
+      const p = recommendDataPlatformParams([]);
+      expect(p.fabricCapacity).toBe("off");
+      expect(p.sqlDbTier).toBe("off");
+      expect(p.cosmosMillionRuPerMonth).toBe(0);
+      expect(p.adlsGb).toBe(0);
+      expect(p.redisTier).toBe("off");
+    });
+
+    it("Data Platform with fabric + azure_sql_db signals → seeds both", () => {
+      const p = recommendDataPlatformParams(["fabric", "azure_sql_db"]);
+      expect(p.fabricCapacity).toBe("F2");
+      expect(p.sqlDbTier).toBe("gp");
+      expect(p.cosmosMillionRuPerMonth).toBe(0); // no cosmos signal
+    });
+
+    it("AI Application with no AI signal → all volumes zero", () => {
+      const p = recommendAiApplicationParams([]);
+      expect(p.openAiInputTokensMillions).toBe(0);
+      expect(p.openAiOutputTokensMillions).toBe(0);
+      expect(p.aiSearchTier).toBe("off");
+      expect(p.mlComputeHoursMonth).toBe(0);
+    });
+
+    it("AI Application with gpu_vm signal → GPU SKU + non-zero ML hours", () => {
+      const p = recommendAiApplicationParams(["gpu_vm", "fine_tuning"]);
+      expect(p.mlComputeSku).toBe("NC4as_T4_v3");
+      expect(p.mlComputeHoursMonth).toBeGreaterThan(0);
+    });
+
+    it("Azure Security defaults: Entra P1 always; Purview/WAF/Private Link signal-gated", () => {
+      expect(recommendAzureSecurityParams([]).entraIdTier).toBe("p1");
+      expect(recommendAzureSecurityParams(["pim"]).entraIdTier).toBe("p2");
+      expect(recommendAzureSecurityParams([]).purviewCapacityUnits).toBe(0);
+      expect(recommendAzureSecurityParams(["purview"]).purviewCapacityUnits).toBe(1);
+    });
+
+    it("Hybrid Multicloud defaults zero out without arc/defender_multicloud signal", () => {
+      expect(recommendHybridMulticloudParams([]).multicloudServerCount).toBe(0);
+      expect(recommendHybridMulticloudParams(["defender_multicloud"]).multicloudServerCount).toBe(5);
+    });
+
+    it("M365 & Others stay empty without m365 signals", () => {
+      const p = recommendM365AndOthersParams([]);
+      expect(p.m365BackupUsers).toBe(0);
+      expect(p.m365ArchiveGb).toBe(0);
+      expect(p.copilotStudioPackCount).toBe(0);
+    });
   });
 });

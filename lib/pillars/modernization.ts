@@ -46,6 +46,31 @@ const ACR_MONTHLY: Record<Exclude<NonNullable<ModernizationParams["acrTier"]>, "
   premium:  { cost: 50.00, label: "Premium" },
 };
 
+/**
+ * Derive ModernizationParams defaults from the classifier's
+ * `suggested_components` signals so AKS / Container Apps / Front Door
+ * only show up in the BOM when the source doc actually mentioned them.
+ * Without this gate every assessment ships an AKS line even when the
+ * inventory has zero container workloads — wasted spend and noisy.
+ *
+ * The user can still bump any count manually in the Stage 3 parameter
+ * form; this just changes the starting point.
+ */
+export function recommendModernizationParams(signals: Iterable<string>): ModernizationParams {
+  const s = new Set(signals);
+  const containerSignals = s.has("aks") || s.has("container_apps") || s.has("acr");
+  return {
+    appServicePlan: "P1v3",
+    appServiceInstances: s.has("app_service") ? 3 : 0,
+    aksNodeSku: "D4s_v5",
+    aksNodeCount: s.has("aks") ? 3 : 0,
+    apimTier: s.has("api_management") ? "developer" : "off",
+    frontDoorTier: s.has("front_door") ? "standard" : "off",
+    acrTier: containerSignals ? "standard" : "off",
+    containerAppsBaselineUsd: s.has("container_apps") ? 12 : 0,
+  };
+}
+
 export function buildModernizationBom(
   region: string,
   appName: string,

@@ -18,6 +18,22 @@ export interface HybridMulticloudParams {
   arcLogIngestionGbMonth?: number;
 }
 
+/**
+ * Derive HybridMulticloudParams defaults from classifier signals.
+ * If the source mentioned Arc-enabled SQL / multicloud Defender /
+ * Arc K8s, seed reasonable counts; otherwise zero them so the BOM
+ * stays empty until the user explicitly opts in.
+ */
+export function recommendHybridMulticloudParams(signals: Iterable<string>): HybridMulticloudParams {
+  const s = new Set(signals);
+  return {
+    multicloudServerCount: (s.has("defender_multicloud") || s.has("azure_arc")) ? 5 : 0,
+    arcK8sClusterCount: s.has("arc_k8s") ? 2 : 0,
+    arcSqlVcoreCount: s.has("arc_sql_payg") ? 1 : 0,
+    arcLogIngestionGbMonth: (s.has("arc_la_ingestion") || s.has("azure_arc")) ? 100 : 0,
+  };
+}
+
 export function buildHybridMulticloudBom(
   items: InventoryItem[],
   region: string,
