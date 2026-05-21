@@ -32,6 +32,7 @@ model Project {
   id              String   @id @default(uuid())
   userId          String   @map("user_id")
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customer        String
   name            String
   region          String
   pricingMode     String   @map("pricing_mode")
@@ -48,7 +49,7 @@ model Project {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  @@unique([userId, name], map: "uniq_user_project_name")
+  @@unique([userId, customer, name], map: "uniq_user_customer_project_name")
   @@index([userId], map: "idx_projects_user_id")
   @@map("projects")
 }

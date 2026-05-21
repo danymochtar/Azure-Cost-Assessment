@@ -195,6 +195,7 @@ export default function AssessmentApp({ user }: { user: string }) {
 
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [pastedText, setPastedText] = useState("");
+  const [customer, setCustomer] = useState("");
   const [appName, setAppName] = useState("");
   const [region, setRegion] = useState<string>(DEFAULT_REGION);
   const [pricingMode, setPricingMode] = useState<PricingMode>("payg");
@@ -222,7 +223,7 @@ export default function AssessmentApp({ user }: { user: string }) {
   const [stage2Confirmed, setStage2Confirmed] = useState(false);
 
   // Saved projects (Postgres-backed). Empty while DB is unavailable.
-  interface SavedProject { id: string; name: string; region: string; updatedAt: string }
+  interface SavedProject { id: string; customer: string; name: string; region: string; updatedAt: string }
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [savingProject, setSavingProject] = useState(false);
   const [savedToast, setSavedToast] = useState("");
@@ -380,8 +381,8 @@ export default function AssessmentApp({ user }: { user: string }) {
   }, [refreshProjects]);
 
   async function saveCurrentProject() {
-    if (!appName.trim()) {
-      setError("Set an Application / project name in Stage 1 before saving.");
+    if (!customer.trim() || !appName.trim()) {
+      setError("Set both Customer and Project name in Stage 1 before saving.");
       return;
     }
     setSavingProject(true);
@@ -391,6 +392,7 @@ export default function AssessmentApp({ user }: { user: string }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          customer: customer.trim(),
           name: appName.trim(),
           region,
           pricingMode,
@@ -410,8 +412,11 @@ export default function AssessmentApp({ user }: { user: string }) {
         const data = (await resp.json().catch(() => ({}))) as { error?: string };
         throw new Error(data.error || `Save failed (HTTP ${resp.status})`);
       }
-      const data = (await resp.json()) as { project?: { name: string } };
-      setSavedToast(`Saved "${data.project?.name ?? appName}"`);
+      const data = (await resp.json()) as { project?: { customer?: string; name: string } };
+      const savedLabel = data.project?.customer
+        ? `${data.project.customer} · ${data.project.name}`
+        : data.project?.name ?? appName;
+      setSavedToast(`Saved "${savedLabel}"`);
       await refreshProjects();
       // Auto-clear toast after a few seconds
       setTimeout(() => setSavedToast(""), 3500);
@@ -428,12 +433,13 @@ export default function AssessmentApp({ user }: { user: string }) {
       const resp = await fetch(`/api/projects/${id}`, { cache: "no-store" });
       if (!resp.ok) throw new Error(`Load failed (HTTP ${resp.status})`);
       const data = (await resp.json()) as { project: {
-        name: string; region: string; pricingMode: string; computeMode: string;
+        customer: string; name: string; region: string; pricingMode: string; computeMode: string;
         useAhbWindows: boolean; nonProdPayg: boolean; defaultDiskTier: string;
         autoDiskTier: boolean; applyHeadroom: boolean; headroom: number;
         activePillars: string[]; items: InventoryItem[]; lines: BomLine[];
       } };
       const p = data.project;
+      setCustomer(p.customer ?? "");
       setAppName(p.name);
       setRegion(p.region);
       setPricingMode(p.pricingMode as PricingMode);
@@ -451,7 +457,7 @@ export default function AssessmentApp({ user }: { user: string }) {
       // We have items + lines — jump straight to the latest stage available
       setStage1Confirmed((p.items ?? []).length > 0);
       setStage2Confirmed((p.lines ?? []).length > 0);
-      setSavedToast(`Loaded "${p.name}"`);
+      setSavedToast(`Loaded "${p.customer ? `${p.customer} · ` : ""}${p.name}"`);
       setTimeout(() => setSavedToast(""), 3500);
     } catch (e) {
       setError((e as Error).message);
@@ -621,27 +627,30 @@ export default function AssessmentApp({ user }: { user: string }) {
             <FolderOpen size={14} /> Saved projects
           </span>
           <div className="saved-projects-list">
-            {savedProjects.map((p) => (
-              <span key={p.id} className="saved-project-pill">
-                <button
-                  type="button"
-                  className="saved-project-load"
-                  title={`Load "${p.name}" — last updated ${new Date(p.updatedAt).toLocaleString()}`}
-                  onClick={() => void loadProject(p.id)}
-                >
-                  {p.name}
-                </button>
-                <button
-                  type="button"
-                  className="saved-project-del"
-                  title="Delete"
-                  aria-label={`Delete ${p.name}`}
-                  onClick={() => void deleteProject(p.id, p.name)}
-                >
-                  <Trash2 size={12} />
-                </button>
-              </span>
-            ))}
+            {savedProjects.map((p) => {
+              const label = p.customer ? `${p.customer} · ${p.name}` : p.name;
+              return (
+                <span key={p.id} className="saved-project-pill">
+                  <button
+                    type="button"
+                    className="saved-project-load"
+                    title={`Load "${label}" — last updated ${new Date(p.updatedAt).toLocaleString()}`}
+                    onClick={() => void loadProject(p.id)}
+                  >
+                    {label}
+                  </button>
+                  <button
+                    type="button"
+                    className="saved-project-del"
+                    title="Delete"
+                    aria-label={`Delete ${label}`}
+                    onClick={() => void deleteProject(p.id, label)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </span>
+              );
+            })}
           </div>
         </div>
       )}
@@ -751,11 +760,30 @@ export default function AssessmentApp({ user }: { user: string }) {
           </div>
         )}
 
-        {/* Application name lives in Stage 1 — it's project metadata,
-            not a design choice. Tagged into every BOM line for export. */}
+        {/* Customer + project name live in Stage 1 — both are required
+            so saved assessments have a stable identity for reload/delete.
+            The (customer, project) pair is the unique key per user. */}
+        <div className="field" style={{ marginTop: "1rem" }}>
+          <label className="field-label" htmlFor="customer">
+            Customer <span style={{ color: "#d13438" }}>*</span>
+            <Tooltip
+              label="Customer"
+              content="The end customer or account this assessment belongs to. Combined with the project name to namespace saved assessments — two different customers can have a project with the same name."
+            />
+          </label>
+          <input
+            id="customer"
+            type="text"
+            required
+            aria-required="true"
+            value={customer}
+            onChange={(e) => setCustomer(e.target.value)}
+            placeholder="e.g. Contoso, Northwind"
+          />
+        </div>
         <div className="field" style={{ marginTop: "1rem" }}>
           <label className="field-label" htmlFor="appName">
-            Application / project name
+            Application / project name <span style={{ color: "#d13438" }}>*</span>
             <Tooltip
               label="Application name"
               content="Tagged into the Custom name column of every line in the Excel export so multi-project BOMs stay traceable."
@@ -764,6 +792,8 @@ export default function AssessmentApp({ user }: { user: string }) {
           <input
             id="appName"
             type="text"
+            required
+            aria-required="true"
             value={appName}
             onChange={(e) => setAppName(e.target.value)}
             placeholder="e.g. ERPSuite, FraudAI"
@@ -775,7 +805,13 @@ export default function AssessmentApp({ user }: { user: string }) {
           <button
             className="primary"
             style={{ width: "100%" }}
-            disabled={stage !== "idle" || tooLarge || (files.length === 0 && !pastedText.trim())}
+            disabled={
+              stage !== "idle" ||
+              tooLarge ||
+              (files.length === 0 && !pastedText.trim()) ||
+              !customer.trim() ||
+              !appName.trim()
+            }
             onClick={() => void runAnalyze()}
           >
             {stage === "classifying" || stage === "extracting" ? (
@@ -1261,7 +1297,7 @@ export default function AssessmentApp({ user }: { user: string }) {
             <button className="primary" onClick={() => void downloadExcel()}>
               <Download size={16} /> Download Excel (full breakdown)
             </button>
-            <button onClick={() => void saveCurrentProject()} disabled={savingProject || !appName.trim()}>
+            <button onClick={() => void saveCurrentProject()} disabled={savingProject || !customer.trim() || !appName.trim()}>
               {savingProject ? (
                 <><Loader2 size={16} className="spin" /> Saving…</>
               ) : (

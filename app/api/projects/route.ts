@@ -25,6 +25,7 @@ async function getOrCreateUserRow(username: string): Promise<string | null> {
 }
 
 const SaveBody = z.object({
+  customer: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   region: z.string(),
   pricingMode: z.string(),
@@ -54,7 +55,7 @@ export async function GET() {
   const projects = await prisma.project.findMany({
     where: { userId: user.id },
     orderBy: { updatedAt: "desc" },
-    select: { id: true, name: true, region: true, updatedAt: true, createdAt: true },
+    select: { id: true, customer: true, name: true, region: true, updatedAt: true, createdAt: true },
   });
   return NextResponse.json({ projects });
 }
@@ -88,6 +89,7 @@ export async function POST(req: Request) {
   // exact JsonValue index signature Prisma wants.
   const data: Prisma.ProjectUpdateInput = {
     region: body.region,
+    customer: body.customer,
     pricingMode: body.pricingMode,
     computeMode: body.computeMode,
     useAhbWindows: body.useAhbWindows,
@@ -103,6 +105,7 @@ export async function POST(req: Request) {
 
   const createData: Prisma.ProjectUncheckedCreateInput = {
     userId,
+    customer: body.customer,
     name: body.name,
     region: body.region,
     pricingMode: body.pricingMode,
@@ -118,13 +121,18 @@ export async function POST(req: Request) {
     lines: body.lines as unknown as Prisma.InputJsonValue,
   };
   const project = await prisma.project.upsert({
-    where: { userId_name: { userId, name: body.name } },
+    where: { userId_customer_name: { userId, customer: body.customer, name: body.name } },
     create: createData,
     update: data,
   });
 
   return NextResponse.json({
     ok: true,
-    project: { id: project.id, name: project.name, updatedAt: project.updatedAt },
+    project: {
+      id: project.id,
+      customer: project.customer,
+      name: project.name,
+      updatedAt: project.updatedAt,
+    },
   });
 }
