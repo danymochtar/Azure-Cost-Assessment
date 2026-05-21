@@ -912,6 +912,70 @@ footer {
 }
 
 /* =============================================================================
+ * Pillar picker — multi-select for which Azure pillars are in scope.
+ * Lives inside the "Detected workload" subsection of Phase 1.
+ * ============================================================================= */
+.pillar-picker {
+  margin-top: 1rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.pillar-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.pillar-picker-head h4 {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.pillar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.pillar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.2rem;
+  font-size: 0.9rem;
+}
+.pillar-row .pillar-name { flex: 1; }
+.pillar-row .badge {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* =============================================================================
+ * Scope note — Phase 3 banner that lists the active pillars + flags
+ * the ones that are scoped but not yet priced.
+ * ============================================================================= */
+.scope-note {
+  padding: 0.6rem 0.85rem;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid rgba(0, 120, 212, 0.18);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-bottom: 0.85rem;
+}
+.scope-note strong { color: var(--text); }
+.scope-note-todo {
+  color: var(--warning);
+  font-weight: 500;
+}
+
+/* =============================================================================
  * Login layout
  * ============================================================================= */
 .login-shell {

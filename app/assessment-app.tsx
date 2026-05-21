@@ -28,7 +28,101 @@ const PILLAR_LABELS: Record<string, string> = {
   unknown: "Unknown",
 };
 
-const PORTED_PILLARS = new Set(["infra_lift_shift"]);
+// The 7 first-class Azure assessment pillars. Lift-shift is the only
+// one fully implemented today — the others show as "not yet priced"
+// in the picker but can still be flagged as in-scope so the user
+// captures the multi-pillar nature of a mixed project.
+const ALL_PILLARS = [
+  "infra_lift_shift",
+  "infra_modernization",
+  "data_platform",
+  "ai_application",
+  "azure_security",
+  "hybrid_multicloud",
+  "m365_and_others",
+] as const;
+type PillarKey = (typeof ALL_PILLARS)[number];
+
+const PORTED_PILLARS: ReadonlySet<string> = new Set(["infra_lift_shift"]);
+
+// Map a `suggested_components` key (returned by the classifier) → owning
+// pillar. Mirrors the COMPONENT_TO_PILLAR mapping from the Python source
+// so the multi-select pre-ticks correctly for a "mixed" classification.
+const COMPONENT_TO_PILLAR: Record<string, PillarKey> = {
+  // Lift-shift / LZ
+  vm_sizing: "infra_lift_shift", managed_disks: "infra_lift_shift",
+  public_ip: "infra_lift_shift", firewall: "infra_lift_shift",
+  bastion: "infra_lift_shift", vpn_gw: "infra_lift_shift",
+  expressroute_circuit: "infra_lift_shift",
+  expressroute_gateway: "infra_lift_shift",
+  app_gateway_waf: "infra_lift_shift",
+  bandwidth_egress: "infra_lift_shift",
+  log_analytics: "infra_lift_shift", key_vault: "infra_lift_shift",
+  recovery_vault: "infra_lift_shift",
+  ha: "infra_lift_shift", bcdr: "infra_lift_shift",
+  nat_gateway: "infra_lift_shift",
+  // Modernization
+  app_service: "infra_modernization", aks: "infra_modernization",
+  container_apps: "infra_modernization", api_management: "infra_modernization",
+  front_door: "infra_modernization", acr: "infra_modernization",
+  service_bus: "infra_modernization",
+  github_enterprise: "infra_modernization",
+  github_advanced_security: "infra_modernization",
+  github_copilot_business: "infra_modernization",
+  github_copilot_enterprise: "infra_modernization",
+  visual_studio_pro: "infra_modernization",
+  visual_studio_enterprise: "infra_modernization",
+  azdo_basic: "infra_modernization", azdo_basic_test: "infra_modernization",
+  azdo_hosted_pipeline: "infra_modernization",
+  azdo_selfhosted_pipeline: "infra_modernization",
+  // Data
+  fabric: "data_platform", synapse: "data_platform",
+  cosmos_db: "data_platform", azure_sql_db: "data_platform",
+  sql_mi: "data_platform", adls_gen2: "data_platform",
+  adf: "data_platform", event_hubs: "data_platform",
+  databricks: "data_platform", power_bi: "data_platform",
+  postgres_flexible: "data_platform", mysql_flexible: "data_platform",
+  redis_cache: "data_platform", azure_files: "data_platform",
+  // AI
+  azure_openai: "ai_application", ai_search: "ai_application",
+  ml_workspace: "ai_application", gpu_vm: "ai_application",
+  cognitive_services: "ai_application", fine_tuning: "ai_application",
+  // Security
+  defender_cspm: "azure_security", defender_servers_p2: "azure_security",
+  sentinel: "azure_security", waf: "azure_security",
+  private_link: "azure_security", purview: "azure_security",
+  pim: "azure_security",
+  ddos_ip_protection: "azure_security",
+  ddos_network_protection: "azure_security",
+  // Hybrid
+  azure_arc: "hybrid_multicloud", defender_multicloud: "hybrid_multicloud",
+  arc_sql_payg: "hybrid_multicloud",
+  arc_winserver_payg: "hybrid_multicloud",
+  arc_k8s: "hybrid_multicloud", arc_la_ingestion: "hybrid_multicloud",
+  // M365 & Others
+  m365_backup: "m365_and_others", m365_archive: "m365_and_others",
+  sharepoint_premium: "m365_and_others",
+  copilot_studio_pack_25k: "m365_and_others",
+  copilot_studio_payg: "m365_and_others",
+  other_marketplace: "m365_and_others",
+};
+
+function seedPillarsFromProfile(p: AssessmentProfile): Set<PillarKey> {
+  const seeded = new Set<PillarKey>();
+  if (
+    p.workloadType !== "mixed" &&
+    p.workloadType !== "unknown" &&
+    (ALL_PILLARS as readonly string[]).includes(p.workloadType)
+  ) {
+    seeded.add(p.workloadType as PillarKey);
+  }
+  for (const c of p.suggestedComponents) {
+    const pk = COMPONENT_TO_PILLAR[c];
+    if (pk) seeded.add(pk);
+  }
+  if (seeded.size === 0) seeded.add("infra_lift_shift");
+  return seeded;
+}
 
 function fmtMoney(n: number, opts: Intl.NumberFormatOptions = {}): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2, ...opts });
@@ -66,6 +160,10 @@ export default function AssessmentApp({ user }: { user: string }) {
 
   const [profile, setProfile] = useState<AssessmentProfile | null>(null);
   const [perFile, setPerFile] = useState<PerFile[]>([]);
+  const [activePillars, setActivePillars] = useState<Set<PillarKey>>(new Set());
+  // Snapshot of what the classifier auto-detected — so we can render a
+  // "(detected)" badge for those and not for ones the user added manually.
+  const [detectedPillars, setDetectedPillars] = useState<Set<PillarKey>>(new Set());
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [lines, setLines] = useState<BomLine[]>([]);
   const [stage, setStage] = useState<"idle" | "classifying" | "extracting" | "pricing">("idle");
@@ -107,6 +205,8 @@ export default function AssessmentApp({ user }: { user: string }) {
     setPastedText("");
     setProfile(null);
     setPerFile([]);
+    setActivePillars(new Set());
+    setDetectedPillars(new Set());
     setItems([]);
     setLines([]);
     setError("");
@@ -142,6 +242,9 @@ export default function AssessmentApp({ user }: { user: string }) {
       const data = (await resp.json()) as { profile: AssessmentProfile; perFile: PerFile[] };
       setProfile(data.profile);
       setPerFile(data.perFile ?? []);
+      const seeded = seedPillarsFromProfile(data.profile);
+      setActivePillars(seeded);
+      setDetectedPillars(new Set(seeded));
 
       if (data.profile.workloadType === "infra_lift_shift" || data.profile.needsVmExtraction) {
         const fd2 = buildFormData();
@@ -378,13 +481,55 @@ export default function AssessmentApp({ user }: { user: string }) {
               </span>
               <span className="badge muted">Confidence {(profile.confidence * 100).toFixed(0)}%</span>
               <span className="badge muted">Complexity {profile.complexity}</span>
-              {!PORTED_PILLARS.has(profile.workloadType) && profile.workloadType !== "unknown" && (
+              {!PORTED_PILLARS.has(profile.workloadType as PillarKey) && profile.workloadType !== "unknown" && (
                 <span className="badge danger">Pillar not yet priced</span>
               )}
             </div>
             {profile.summary && (
               <p className="helper" style={{ marginTop: "0.5rem" }}>{profile.summary}</p>
             )}
+
+            {/* Pillars in scope — multi-select. Pre-ticked from classifier output;
+                user can add/remove for mixed-workload assessments. */}
+            <div className="pillar-picker">
+              <div className="pillar-picker-head">
+                <h4>
+                  Pillars in scope
+                  <Tooltip
+                    label="Pillars in scope"
+                    content="The AI pre-ticked pillars it detected. Add or remove pillars to broaden the scope for a mixed project — e.g. lift-and-shift combined with data platform, AI app, security, or hybrid multicloud. Pillars marked 'not yet priced' will be recorded as scope but won't add line items to the BOM yet."
+                  />
+                </h4>
+                <span className="badge muted">{activePillars.size} of {ALL_PILLARS.length}</span>
+              </div>
+              <div className="pillar-list">
+                {ALL_PILLARS.map((pk) => {
+                  const active = activePillars.has(pk);
+                  const wasDetected = detectedPillars.has(pk);
+                  const ported = PORTED_PILLARS.has(pk);
+                  return (
+                    <label key={pk} className="checkbox-row pillar-row">
+                      <input
+                        type="checkbox"
+                        checked={active}
+                        onChange={(e) => {
+                          setActivePillars((curr) => {
+                            const next = new Set(curr);
+                            if (e.target.checked) next.add(pk);
+                            else next.delete(pk);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span className="pillar-name">{PILLAR_LABELS[pk]}</span>
+                      {wasDetected && <span className="badge success">detected</span>}
+                      {!ported && <span className="badge muted">not yet priced</span>}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
             {perFile.length > 1 && (
               <details>
                 <summary>Per-file classification ({perFile.length} files)</summary>
@@ -624,6 +769,27 @@ export default function AssessmentApp({ user }: { user: string }) {
               <h2>Cost estimate</h2>
             </span>
           </div>
+
+          {activePillars.size > 0 && (
+            <div className="scope-note">
+              <strong>Scope:</strong>{" "}
+              {Array.from(activePillars)
+                .map((pk) => PILLAR_LABELS[pk])
+                .join(" · ")}
+              {Array.from(activePillars).some((pk) => !PORTED_PILLARS.has(pk)) && (
+                <>
+                  {" — "}
+                  <span className="scope-note-todo">
+                    {Array.from(activePillars)
+                      .filter((pk) => !PORTED_PILLARS.has(pk))
+                      .map((pk) => PILLAR_LABELS[pk])
+                      .join(", ")}{" "}
+                    not yet priced (TODO; tracked in docs/PORTING-ROADMAP.md)
+                  </span>
+                </>
+              )}
+            </div>
+          )}
 
           <div className="metrics">
             <div className="metric">
