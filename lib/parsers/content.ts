@@ -67,7 +67,7 @@ interface SpreadsheetPreview {
   sheetNames: string[];
 }
 
-function parseCsv(text: string): { headers: string[]; rows: Record<string, string>[] } {
+export function parseCsv(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
   if (lines.length === 0) return { headers: [], rows: [] };
   const splitRow = (s: string): string[] => {
@@ -93,10 +93,17 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
     out.push(cur);
     return out;
   };
-  const headers = uniqueHeadersLocal(splitRow(lines[0]).map((h) => h.trim()));
+  // Same pivoted-layout defence as the workbook reader: size headers off
+  // the widest row, not just the first line, so value columns past a
+  // shorter title row survive the preview.
+  const splitRows = lines.map(splitRow);
+  const maxCols = splitRows.reduce((m, r) => Math.max(m, r.length), 0);
+  const rawHeader = [...splitRows[0]];
+  while (rawHeader.length < maxCols) rawHeader.push("");
+  const headers = uniqueHeadersLocal(rawHeader.map((h) => h.trim()));
   const rows: Record<string, string>[] = [];
-  for (let i = 1; i < lines.length; i += 1) {
-    const cells = splitRow(lines[i]);
+  for (let i = 1; i < splitRows.length; i += 1) {
+    const cells = splitRows[i];
     const r: Record<string, string> = {};
     for (let j = 0; j < headers.length; j += 1) r[headers[j]] = (cells[j] ?? "").trim();
     rows.push(r);
@@ -144,7 +151,16 @@ async function readWorkbook(data: Buffer, filename: string) {
       sheets.push({ name: ws.name, headers: [], rows: [] });
       return;
     }
-    const headers = uniqueHeaders(allRows[0].map((h) => String(h ?? "")));
+    // Pivoted spec sheets often have a single-cell title row above the
+    // key/value pairs (e.g. "YM ERP server with hyper-v" alone in row 1,
+    // then "Processor | Xeon Gold 6234" in row 2, "RAM | 256 GB" in row 3
+    // and so on). Sizing headers off allRows[0] alone would drop every
+    // value-side cell beyond the header's width. Take the widest row
+    // instead so no column is silently truncated.
+    const maxCols = allRows.reduce((m, r) => Math.max(m, r.length), 0);
+    const rawHeaderRow: unknown[] = [...allRows[0]];
+    while (rawHeaderRow.length < maxCols) rawHeaderRow.push("");
+    const headers = uniqueHeaders(rawHeaderRow.map((h) => String(h ?? "")));
     const rows = allRows.slice(1).map((arr) => {
       const r: Record<string, unknown> = {};
       headers.forEach((h, i) => {
