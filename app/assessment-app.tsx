@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle, AlertTriangle, BadgeCheck, Calculator, Cloud, Download,
-  FileText, Files, Loader2, LogOut, Receipt, RefreshCcw, Search, Server,
-  Settings2, Sparkles, UploadCloud, User as UserIcon, X,
+  FileText, Files, FolderOpen, Loader2, LogOut, Receipt, RefreshCcw, Save,
+  Search, Server, Settings2, Sparkles, Trash2, UploadCloud,
+  User as UserIcon, X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Tooltip } from "@/components/Tooltip";
@@ -219,6 +220,12 @@ export default function AssessmentApp({ user }: { user: string }) {
   // remain editable; the user just re-confirms to propagate changes.
   const [stage1Confirmed, setStage1Confirmed] = useState(false);
   const [stage2Confirmed, setStage2Confirmed] = useState(false);
+
+  // Saved projects (Postgres-backed). Empty while DB is unavailable.
+  interface SavedProject { id: string; name: string; region: string; updatedAt: string }
+  const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
+  const [savingProject, setSavingProject] = useState(false);
+  const [savedToast, setSavedToast] = useState("");
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [lines, setLines] = useState<BomLine[]>([]);
   const [stage, setStage] = useState<"idle" | "classifying" | "extracting" | "pricing">("idle");
@@ -354,6 +361,112 @@ export default function AssessmentApp({ user }: { user: string }) {
     await fetch("/api/auth/logout", { method: "POST" });
     router.replace("/login");
     router.refresh();
+  }
+
+  // ----- Saved projects ---------------------------------------------------
+  const refreshProjects = useCallback(async () => {
+    try {
+      const resp = await fetch("/api/projects", { cache: "no-store" });
+      if (!resp.ok) return;
+      const data = (await resp.json()) as { projects?: SavedProject[]; dbDisabled?: boolean };
+      setSavedProjects(data.projects ?? []);
+    } catch {
+      /* silent — projects panel just won't appear */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshProjects();
+  }, [refreshProjects]);
+
+  async function saveCurrentProject() {
+    if (!appName.trim()) {
+      setError("Set an Application / project name in Stage 1 before saving.");
+      return;
+    }
+    setSavingProject(true);
+    setError("");
+    try {
+      const resp = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: appName.trim(),
+          region,
+          pricingMode,
+          computeMode,
+          useAhbWindows,
+          nonProdPayg,
+          defaultDiskTier: diskTier,
+          autoDiskTier,
+          applyHeadroom,
+          headroom,
+          activePillars: Array.from(activePillars),
+          items,
+          lines,
+        }),
+      });
+      if (!resp.ok) {
+        const data = (await resp.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error || `Save failed (HTTP ${resp.status})`);
+      }
+      const data = (await resp.json()) as { project?: { name: string } };
+      setSavedToast(`Saved "${data.project?.name ?? appName}"`);
+      await refreshProjects();
+      // Auto-clear toast after a few seconds
+      setTimeout(() => setSavedToast(""), 3500);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSavingProject(false);
+    }
+  }
+
+  async function loadProject(id: string) {
+    setError("");
+    try {
+      const resp = await fetch(`/api/projects/${id}`, { cache: "no-store" });
+      if (!resp.ok) throw new Error(`Load failed (HTTP ${resp.status})`);
+      const data = (await resp.json()) as { project: {
+        name: string; region: string; pricingMode: string; computeMode: string;
+        useAhbWindows: boolean; nonProdPayg: boolean; defaultDiskTier: string;
+        autoDiskTier: boolean; applyHeadroom: boolean; headroom: number;
+        activePillars: string[]; items: InventoryItem[]; lines: BomLine[];
+      } };
+      const p = data.project;
+      setAppName(p.name);
+      setRegion(p.region);
+      setPricingMode(p.pricingMode as PricingMode);
+      setComputeMode(p.computeMode as ComputeMode);
+      setUseAhbWindows(p.useAhbWindows);
+      setNonProdPayg(p.nonProdPayg);
+      setDiskTier(p.defaultDiskTier as typeof diskTier);
+      setAutoDiskTier(p.autoDiskTier);
+      setApplyHeadroom(p.applyHeadroom);
+      setHeadroom(p.headroom);
+      setActivePillars(new Set(p.activePillars as PillarKey[]));
+      setDetectedPillars(new Set());
+      setItems(p.items ?? []);
+      setLines(p.lines ?? []);
+      // We have items + lines — jump straight to the latest stage available
+      setStage1Confirmed((p.items ?? []).length > 0);
+      setStage2Confirmed((p.lines ?? []).length > 0);
+      setSavedToast(`Loaded "${p.name}"`);
+      setTimeout(() => setSavedToast(""), 3500);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function deleteProject(id: string, name: string) {
+    if (!confirm(`Delete saved project "${name}"? This can't be undone.`)) return;
+    try {
+      const resp = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+      if (!resp.ok) throw new Error(`Delete failed (HTTP ${resp.status})`);
+      await refreshProjects();
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   async function runAnalyze() {
@@ -501,6 +614,44 @@ export default function AssessmentApp({ user }: { user: string }) {
       <p className="hero-pitch">
         Upload your workload. Pick your Azure design. Get a live cost estimate.
       </p>
+
+      {savedProjects.length > 0 && (
+        <div className="saved-projects-bar">
+          <span className="saved-projects-label">
+            <FolderOpen size={14} /> Saved projects
+          </span>
+          <div className="saved-projects-list">
+            {savedProjects.map((p) => (
+              <span key={p.id} className="saved-project-pill">
+                <button
+                  type="button"
+                  className="saved-project-load"
+                  title={`Load "${p.name}" — last updated ${new Date(p.updatedAt).toLocaleString()}`}
+                  onClick={() => void loadProject(p.id)}
+                >
+                  {p.name}
+                </button>
+                <button
+                  type="button"
+                  className="saved-project-del"
+                  title="Delete"
+                  aria-label={`Delete ${p.name}`}
+                  onClick={() => void deleteProject(p.id, p.name)}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {savedToast && (
+        <div className="banner success" role="status">
+          <BadgeCheck size={16} className="icon" />
+          <span>{savedToast}</span>
+        </div>
+      )}
 
       {error && (
         <div className="banner error" role="alert">
@@ -1106,9 +1257,16 @@ export default function AssessmentApp({ user }: { user: string }) {
             </div>
           </div>
 
-          <div style={{ marginBottom: "1rem" }}>
-            <button className="primary" style={{ width: "100%" }} onClick={() => void downloadExcel()}>
+          <div className="actions" style={{ marginBottom: "1rem" }}>
+            <button className="primary" onClick={() => void downloadExcel()}>
               <Download size={16} /> Download Excel (full breakdown)
+            </button>
+            <button onClick={() => void saveCurrentProject()} disabled={savingProject || !appName.trim()}>
+              {savingProject ? (
+                <><Loader2 size={16} className="spin" /> Saving…</>
+              ) : (
+                <><Save size={16} /> Save assessment</>
+              )}
             </button>
           </div>
 

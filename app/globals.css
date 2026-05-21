@@ -987,6 +987,78 @@ footer {
 .solution-area .pillar-row { padding: 0.3rem 0; }
 
 /* =============================================================================
+ * Saved projects bar — sits between the hero pitch and Stage 1.
+ * One pill per project; tap to load, X to delete.
+ * ============================================================================= */
+.saved-projects-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+  overflow-x: auto;
+}
+.saved-projects-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+.saved-projects-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.saved-project-pill {
+  display: inline-flex;
+  align-items: stretch;
+  background: var(--accent-soft);
+  border: 1px solid rgba(0, 120, 212, 0.18);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.saved-project-load {
+  background: transparent;
+  border: none;
+  padding: 0.3rem 0.7rem;
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: 32px;
+  border-radius: 999px 0 0 999px;
+}
+.saved-project-load:hover { background: rgba(0, 120, 212, 0.1); }
+.saved-project-del {
+  background: transparent;
+  border: none;
+  border-left: 1px solid rgba(0, 120, 212, 0.18);
+  padding: 0 0.5rem;
+  color: var(--accent);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  border-radius: 0 999px 999px 0;
+}
+.saved-project-del:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-left-color: var(--danger);
+}
+
+/* =============================================================================
  * Editable inventory table (Stage 2)
  * Every field is an input so the user can fix the AI's extraction inline.
  * ============================================================================= */

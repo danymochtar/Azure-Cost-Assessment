@@ -59,13 +59,52 @@ Open http://localhost:3000 → redirects to `/login` until you sign in.
 | Var | Purpose | Default |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Claude classifier + extractor | — (required) |
-| `BETTER_AUTH_SECRET` | HMAC key for both the session cookie and the per-browser account-record cookie. **Rotate to invalidate every account + session.** | — (required, ≥16 chars) |
+| `BETTER_AUTH_SECRET` | HMAC key for the session cookie. **Rotate to invalidate every session.** | — (required, ≥16 chars) |
+| `DATABASE_URL` | Postgres connection string for registered users + saved projects | — (optional; without it, only the bootstrap admin can log in and saved projects are disabled) |
 | `APP_USER` | Bootstrap admin username (optional override) | `admin` |
 | `APP_PASSWORD` | Bootstrap admin password (optional override) | `noventiq` |
 
 The bootstrap admin works out of the box as `admin` / `noventiq` — no
-env-var configuration needed. Override with `APP_USER` / `APP_PASSWORD`
-when you deploy to a public URL.
+env-var configuration needed. Set `DATABASE_URL` to enable multi-user
+registration, password reset, and saved projects.
+
+### Database setup (one-shot)
+
+Run this once per fresh DB to create the `users` and `projects` tables:
+
+```bash
+DATABASE_URL='postgresql://USER:PASS@HOST:5432/DB' npx prisma db push
+```
+
+Tables created: `users` (id, username, password_hash, timestamps) and
+`projects` (per-user saved assessments including region, design knobs,
+extracted inventory, and last computed BOM as JSONB). The Prisma schema
+lives at `prisma/schema.prisma`.
+
+On Vercel: add `DATABASE_URL` to project env vars. The build runs
+`prisma generate` automatically (postinstall hook). Schema changes
+need a manual `prisma db push` against the production DB after
+deploy — there's no migrate-on-deploy step.
+
+### Saved projects
+
+Once `DATABASE_URL` is set, a "Saved projects" pill bar appears between
+the hero pitch and Stage 1 showing every project the signed-in user has
+saved. Tap a pill to load it (restores all stages: inventory, design
+parameters, last computed BOM). The trash icon on each pill deletes that
+project.
+
+The "Save assessment" button in Stage 4 (next to the Excel download)
+upserts by project name within the user's scope — so saving with the
+same Application name twice overwrites rather than duplicating.
+
+### Forgot password
+
+`/forgot` lets a user set a new password by entering their username +
+new password. There's no email-verification step — this is a small-team
+private-deployment app and the form trades verification for simplicity.
+If you publish the URL publicly, swap this for an email-based reset
+flow with a short-lived signed reset token before going live.
 
 No database. No Redis. No external storage. Two cookies do all the work:
 

@@ -1,0 +1,54 @@
+// Azure Cost Assessment — Postgres schema via Prisma.
+//
+// Two models: users (auth) and projects (saved assessments owned by a user).
+// Project payloads (active pillars, inventory items, last computed BOM lines)
+// are stored as JSONB so the schema stays stable as the assessment shape
+// evolves over time.
+//
+// Connection: process.env.DATABASE_URL. Set in .env.local for local dev
+// and in Vercel project settings for production. Never committed to source.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  username     String    @unique
+  passwordHash String    @map("password_hash")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  projects     Project[]
+
+  @@map("users")
+}
+
+model Project {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  region          String
+  pricingMode     String   @map("pricing_mode")
+  computeMode     String   @map("compute_mode")
+  useAhbWindows   Boolean  @map("use_ahb_windows")
+  nonProdPayg     Boolean  @map("non_prod_payg")
+  defaultDiskTier String   @map("default_disk_tier")
+  autoDiskTier    Boolean  @map("auto_disk_tier")
+  applyHeadroom   Boolean  @map("apply_headroom")
+  headroom        Float
+  activePillars   Json     @default("[]") @map("active_pillars")
+  items           Json     @default("[]")
+  lines           Json     @default("[]")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, name], map: "uniq_user_project_name")
+  @@index([userId], map: "idx_projects_user_id")
+  @@map("projects")
+}

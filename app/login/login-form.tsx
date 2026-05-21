@@ -113,6 +113,8 @@ export default function LoginForm({ next }: { next: string }) {
         </form>
 
         <div className="login-foot">
+          <Link href="/forgot">Forgot password?</Link>
+          {" · "}
           Session signed with <code>BETTER_AUTH_SECRET</code> · 30-day cookie
         </div>
       </div>

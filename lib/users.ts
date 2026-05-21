@@ -1,105 +1,100 @@
-// DB-less user accounts: the account record IS a signed cookie.
+// User store backed by Postgres via Prisma.
 //
-// On registration we bcrypt the password and HMAC-sign a payload
-// {u: username, h: bcryptHash, iat: <unix-seconds>} with BETTER_AUTH_SECRET.
-// The result is stored as the `azca_account` cookie (HttpOnly, 1-year TTL).
-// To log in later the browser presents the cookie, the server verifies the
-// HMAC, the user re-types their password, and we bcrypt-compare.
-//
-// Trade-off: accounts are per-browser. Clearing cookies / switching
-// browsers / using a private window means re-registering. No external
-// storage of any kind — zero setup, fits Vercel serverless cleanly.
+// Usernames are stored case-insensitively (we lowercase on the way in
+// and lookup is by exact match). Passwords are bcrypt-hashed (10 rounds).
+// The bootstrap admin (APP_USER / APP_PASSWORD env vars) lives outside
+// this store and is checked separately in /api/auth/login — that path
+// always works, even when DATABASE_URL is unset, so the deployment
+// has at least one usable login regardless of DB health.
 
-import { createHmac, timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
+import { prisma, hasDatabase } from "./prisma";
 
-export const ACCOUNT_COOKIE = "azca_account";
-export const ACCOUNT_MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // 1 year
-
-export interface AccountPayload {
-  u: string;   // username
-  h: string;   // bcrypt hash of the password
-  iat: number; // issued-at, unix seconds
+export interface UserRecord {
+  id: string;
+  username: string;
+  passwordHash: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-function getSecret(): string {
-  const s = process.env.BETTER_AUTH_SECRET;
-  if (!s || s.length < 16) {
-    throw new Error(
-      "BETTER_AUTH_SECRET is missing or too short. Set a ≥16-char secret in your env.",
-    );
+function normaliseUsername(s: string): string {
+  return s.trim().toLowerCase();
+}
+
+export { normaliseUsername };
+
+export async function findUser(usernameRaw: string): Promise<UserRecord | null> {
+  if (!hasDatabase()) return null;
+  const username = normaliseUsername(usernameRaw);
+  if (!username) return null;
+  return prisma.user.findUnique({ where: { username } });
+}
+
+export async function userExists(usernameRaw: string): Promise<boolean> {
+  if (!hasDatabase()) return false;
+  const username = normaliseUsername(usernameRaw);
+  if (!username) return false;
+  const count = await prisma.user.count({ where: { username } });
+  return count > 0;
+}
+
+export async function createUser(usernameRaw: string, password: string): Promise<UserRecord> {
+  if (!hasDatabase()) {
+    throw new Error("Registration unavailable: DATABASE_URL is not configured.");
   }
-  return s;
+  const username = normaliseUsername(usernameRaw);
+  if (!username) throw new Error("Username can't be blank.");
+
+  // Pre-check so we return a clean 409 rather than a Prisma unique-violation.
+  const existing = await prisma.user.findUnique({ where: { username } });
+  if (existing) throw new Error("An account with that username already exists.");
+
+  const passwordHash = bcrypt.hashSync(password, 10);
+  return prisma.user.create({
+    data: { username, passwordHash },
+  });
 }
 
-function b64url(buf: Buffer | string): string {
-  return Buffer.from(buf as string)
-    .toString("base64")
-    .replace(/=+$/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-}
-
-function b64urlDecode(s: string): Buffer {
-  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
-  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64");
-}
-
-function sign(payload: string, secret: string): string {
-  return b64url(createHmac("sha256", secret).update(payload).digest());
-}
-
-export function createAccountCookie(
-  username: string,
-  password: string,
-): { value: string; maxAge: number } {
-  const secret = getSecret();
-  const hash = bcrypt.hashSync(password, 10);
-  const payload = b64url(
-    JSON.stringify({ u: username, h: hash, iat: Math.floor(Date.now() / 1000) }),
-  );
-  const sig = sign(payload, secret);
-  return { value: `${payload}.${sig}`, maxAge: ACCOUNT_MAX_AGE_SECONDS };
-}
-
-export function verifyAccountCookie(
-  raw: string | undefined | null,
-): AccountPayload | null {
-  if (!raw) return null;
-  const parts = raw.split(".");
-  if (parts.length !== 2) return null;
-  const [payload, sig] = parts;
-
-  let secret: string;
+export function verifyPassword(record: UserRecord, password: string): boolean {
   try {
-    secret = getSecret();
-  } catch {
-    return null;
-  }
-
-  const expected = sign(payload, secret);
-  const a = Buffer.from(expected);
-  const b = Buffer.from(sig);
-  if (a.length !== b.length) return null;
-  if (!timingSafeEqual(a, b)) return null;
-
-  try {
-    const decoded = JSON.parse(b64urlDecode(payload).toString("utf-8")) as Partial<AccountPayload>;
-    if (typeof decoded.u !== "string" || typeof decoded.h !== "string") return null;
-    return { u: decoded.u, h: decoded.h, iat: Number(decoded.iat ?? 0) };
-  } catch {
-    return null;
-  }
-}
-
-export function verifyPassword(account: AccountPayload, password: string): boolean {
-  try {
-    return bcrypt.compareSync(password, account.h);
+    return bcrypt.compareSync(password, record.passwordHash);
   } catch {
     return false;
   }
 }
 
-export function normaliseUsername(s: string): string {
-  return s.trim();
+export async function updatePassword(usernameRaw: string, newPassword: string): Promise<boolean> {
+  if (!hasDatabase()) {
+    throw new Error("Password reset unavailable: DATABASE_URL is not configured.");
+  }
+  const username = normaliseUsername(usernameRaw);
+  if (!username) return false;
+  const passwordHash = bcrypt.hashSync(newPassword, 10);
+  try {
+    await prisma.user.update({
+      where: { username },
+      data: { passwordHash },
+    });
+    return true;
+  } catch {
+    // Prisma throws P2025 when no row matches. Surface as "no such user".
+    return false;
+  }
+}
+
+export async function changePassword(
+  usernameRaw: string,
+  oldPassword: string,
+  newPassword: string,
+): Promise<"ok" | "wrong-password" | "no-user"> {
+  if (!hasDatabase()) {
+    throw new Error("Password change unavailable: DATABASE_URL is not configured.");
+  }
+  const user = await findUser(usernameRaw);
+  if (!user) return "no-user";
+  if (!verifyPassword(user, oldPassword)) return "wrong-password";
+  const passwordHash = bcrypt.hashSync(newPassword, 10);
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+  return "ok";
 }
