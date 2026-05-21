@@ -382,8 +382,13 @@ async function extractOneChunk(
  * Non-spreadsheet files (PDF / DOCX / image / text) bypass chunking
  * and run as a single chunk.
  */
-const INTER_CHUNK_DELAY_MS = 12_000;
-const ROWS_PER_CHUNK = 300;
+// Empty rows are stripped by the parser, so 500-row chunks comfortably
+// fit under Anthropic's 50k input-tokens-per-minute Tier 1 cap for the
+// typical RVTools shape (~5-8k tokens per chunk). Halving the inter-
+// chunk delay roughly doubles throughput for big files — rate-limit
+// 429s still trigger the `Retry-After` sleep in extractOneChunk.
+const INTER_CHUNK_DELAY_MS = 6_000;
+const ROWS_PER_CHUNK = 500;
 
 export async function extractInventory(
   data: Buffer,

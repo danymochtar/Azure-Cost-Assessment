@@ -61,6 +61,50 @@ async function extractDocxText(data: Buffer): Promise<string> {
   return result.value;
 }
 
+/** Max edge (pixels) for images sent to the vision model. Beyond this
+ *  point the model's OCR doesn't gain much, but vision input tokens
+ *  (and latency) keep growing linearly with pixel count. */
+const IMAGE_MAX_EDGE_PX = 1600;
+/** JPEG quality for re-encoded screenshots. 85 keeps text legible at
+ *  ~6-10× smaller payload than the source PNG for typical UI shots. */
+const IMAGE_JPEG_QUALITY = 85;
+
+async function optimizeImage(
+  data: Buffer,
+  filename: string,
+): Promise<{ data: Buffer; mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp"; beforeBytes: number; afterBytes: number; resized: boolean }> {
+  const beforeBytes = data.length;
+  // Animated GIFs lose their animation when run through sharp; skip
+  // optimization entirely for that format.
+  if (filename.toLowerCase().endsWith(".gif")) {
+    return { data, mediaType: imageMime(filename), beforeBytes, afterBytes: beforeBytes, resized: false };
+  }
+  try {
+    const sharp = (await import("sharp")).default;
+    const img = sharp(data, { failOn: "none" });
+    const meta = await img.metadata();
+    const maxEdge = Math.max(meta.width ?? 0, meta.height ?? 0);
+    const needsResize = maxEdge > IMAGE_MAX_EDGE_PX;
+    // Re-encode to JPEG when the source is larger than 200 KB (typical
+    // for screenshots); leaves small images untouched.
+    const needsRecode = beforeBytes > 200_000;
+    if (!needsResize && !needsRecode) {
+      return { data, mediaType: imageMime(filename), beforeBytes, afterBytes: beforeBytes, resized: false };
+    }
+    let pipeline = img;
+    if (needsResize) {
+      pipeline = pipeline.resize({ width: IMAGE_MAX_EDGE_PX, height: IMAGE_MAX_EDGE_PX, fit: "inside", withoutEnlargement: true });
+    }
+    const out = await pipeline.jpeg({ quality: IMAGE_JPEG_QUALITY, mozjpeg: true }).toBuffer();
+    return { data: out, mediaType: "image/jpeg", beforeBytes, afterBytes: out.length, resized: needsResize };
+  } catch {
+    // Sharp can fail on exotic formats / corrupted headers — fall
+    // back to sending the original bytes so the user still gets a
+    // result, just slower.
+    return { data, mediaType: imageMime(filename), beforeBytes, afterBytes: beforeBytes, resized: false };
+  }
+}
+
 interface SpreadsheetPreview {
   preview: string;
   rowCount: number;
@@ -104,6 +148,9 @@ export function parseCsv(text: string): { headers: string[]; rows: Record<string
   const rows: Record<string, string>[] = [];
   for (let i = 1; i < splitRows.length; i += 1) {
     const cells = splitRows[i];
+    // Skip rows where every cell is blank — keeps the preview compact
+    // and stops sparse spreadsheets blowing the chunk budget.
+    if (cells.every((c) => !c || !String(c).trim())) continue;
     const r: Record<string, string> = {};
     for (let j = 0; j < headers.length; j += 1) r[headers[j]] = (cells[j] ?? "").trim();
     rows.push(r);
@@ -161,13 +208,17 @@ async function readWorkbook(data: Buffer, filename: string) {
     const rawHeaderRow: unknown[] = [...allRows[0]];
     while (rawHeaderRow.length < maxCols) rawHeaderRow.push("");
     const headers = uniqueHeaders(rawHeaderRow.map((h) => String(h ?? "")));
-    const rows = allRows.slice(1).map((arr) => {
+    const rows: Record<string, unknown>[] = [];
+    for (const arr of allRows.slice(1)) {
+      // Drop wholly-empty rows so a sparse RVTools export doesn't
+      // pad the preview / inflate the chunk count.
+      if (arr.every((v) => v == null || String(v).trim() === "")) continue;
       const r: Record<string, unknown> = {};
       headers.forEach((h, i) => {
         r[h] = arr[i] ?? "";
       });
-      return r;
-    });
+      rows.push(r);
+    }
     sheets.push({ name: ws.name, headers, rows });
   });
   return { sheets };
@@ -245,13 +296,22 @@ export async function prepare(
   }
 
   if (kind === "image") {
+    // Downscale anything bigger than 1600px on the longest edge before
+    // sending to Claude — vision input tokens scale with pixel count,
+    // and a 4k screenshot is ~5× the tokens (and latency) of a 1600px
+    // version of the same content. JPEG re-encode at q=85 also halves
+    // the wire payload for PNG screenshots.
+    const { data: optimized, mediaType, beforeBytes, afterBytes, resized } =
+      await optimizeImage(data, filename);
     uc.contentBlocks = [
       {
         type: "image",
-        source: { type: "base64", media_type: imageMime(filename), data: toBase64(data) },
+        source: { type: "base64", media_type: mediaType, data: toBase64(optimized) },
       },
     ];
-    uc.textSummary = `Image — ${data.length.toLocaleString()} bytes`;
+    uc.textSummary = resized
+      ? `Image — downscaled ${beforeBytes.toLocaleString()} → ${afterBytes.toLocaleString()} bytes`
+      : `Image — ${beforeBytes.toLocaleString()} bytes`;
     return uc;
   }
 
