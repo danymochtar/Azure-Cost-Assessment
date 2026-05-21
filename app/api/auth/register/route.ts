@@ -5,13 +5,17 @@ import {
   SESSION_COOKIE,
   SESSION_MAX_AGE_SECONDS,
 } from "@/lib/auth";
-import { createUser, hasPersistentStore, userExists } from "@/lib/users";
+import {
+  ACCOUNT_COOKIE,
+  createAccountCookie,
+  normaliseUsername,
+} from "@/lib/users";
 
 export const runtime = "nodejs";
 
 const BodySchema = z.object({
-  identifier: z.string().min(3, "At least 3 characters").max(120),
-  password: z.string().min(8, "At least 8 characters").max(256),
+  username: z.string().min(3, "Username needs at least 3 characters").max(60),
+  password: z.string().min(6, "Password needs at least 6 characters").max(256),
 });
 
 export async function POST(req: Request) {
@@ -28,44 +32,44 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  if (!hasPersistentStore() && process.env.NODE_ENV === "production") {
-    return NextResponse.json(
-      {
-        error:
-          "Registration is unavailable: this deployment has no persistent user store. " +
-          "Enable Vercel KV (or set KV_REST_API_URL + KV_REST_API_TOKEN).",
-      },
-      { status: 503 },
-    );
+  const username = normaliseUsername(body.username);
+  if (!username) {
+    return NextResponse.json({ error: "Username can't be blank" }, { status: 400 });
   }
 
-  if (await userExists(body.identifier)) {
-    return NextResponse.json(
-      { error: "An account with that email or username already exists." },
-      { status: 409 },
-    );
-  }
-
-  let record;
+  let account;
+  let session;
   try {
-    record = await createUser(body.identifier, body.password);
+    account = createAccountCookie(username, body.password);
+    session = createSessionCookie(username);
   } catch (e) {
-    return NextResponse.json(
-      { error: (e as Error).message || "Failed to create account" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 
-  const session = createSessionCookie(record.identifier);
-  const res = NextResponse.json({ ok: true, user: record.identifier });
+  const res = NextResponse.json({ ok: true, user: username });
+  const secure = process.env.NODE_ENV === "production";
+
+  // Persistent (1-year) account record cookie.
+  res.cookies.set({
+    name: ACCOUNT_COOKIE,
+    value: account.value,
+    httpOnly: true,
+    secure,
+    sameSite: "lax",
+    path: "/",
+    maxAge: account.maxAge,
+  });
+
+  // Short-lived (30-day) signed-in session.
   res.cookies.set({
     name: SESSION_COOKIE,
     value: session.value,
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure,
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
   });
+
   return res;
 }

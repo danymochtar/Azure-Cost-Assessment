@@ -1,120 +1,105 @@
-// User store with two backends:
-//   - production: Upstash Redis (Vercel KV) via @upstash/redis
-//   - dev / no-Redis: in-memory Map kept on globalThis so HMR doesn't wipe it
+// DB-less user accounts: the account record IS a signed cookie.
 //
-// Records are keyed `user:{lowercased-identifier}` and serialized as JSON:
-//   { id: string, identifier: string, passwordHash: string, createdAt: number }
+// On registration we bcrypt the password and HMAC-sign a payload
+// {u: username, h: bcryptHash, iat: <unix-seconds>} with BETTER_AUTH_SECRET.
+// The result is stored as the `azca_account` cookie (HttpOnly, 1-year TTL).
+// To log in later the browser presents the cookie, the server verifies the
+// HMAC, the user re-types their password, and we bcrypt-compare.
 //
-// The identifier is normalised to lowercase so "Admin@x.com" and
-// "admin@x.com" collide rather than producing duplicate accounts.
+// Trade-off: accounts are per-browser. Clearing cookies / switching
+// browsers / using a private window means re-registering. No external
+// storage of any kind — zero setup, fits Vercel serverless cleanly.
 
+import { createHmac, timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { Redis } from "@upstash/redis";
 
-export interface UserRecord {
-  id: string;
-  identifier: string;
-  passwordHash: string;
-  createdAt: number;
+export const ACCOUNT_COOKIE = "azca_account";
+export const ACCOUNT_MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // 1 year
+
+export interface AccountPayload {
+  u: string;   // username
+  h: string;   // bcrypt hash of the password
+  iat: number; // issued-at, unix seconds
 }
 
-interface UserStore {
-  get(identifier: string): Promise<UserRecord | null>;
-  create(record: UserRecord): Promise<void>;
-  has(identifier: string): Promise<boolean>;
-}
-
-function key(identifier: string) {
-  return `user:${identifier.trim().toLowerCase()}`;
-}
-
-// ---------------------------------------------------------------------------
-// In-memory dev fallback. Pinned to globalThis so Next.js HMR + module
-// re-evaluation don't repeatedly empty the map during a dev session.
-// ---------------------------------------------------------------------------
-const G = globalThis as unknown as { __azca_users?: Map<string, UserRecord> };
-G.__azca_users ??= new Map();
-const memMap = G.__azca_users;
-
-const memoryStore: UserStore = {
-  async get(identifier) {
-    return memMap.get(key(identifier)) ?? null;
-  },
-  async create(record) {
-    memMap.set(key(record.identifier), record);
-  },
-  async has(identifier) {
-    return memMap.has(key(identifier));
-  },
-};
-
-// ---------------------------------------------------------------------------
-// Upstash store
-// ---------------------------------------------------------------------------
-function makeUpstashStore(): UserStore | null {
-  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  const redis = new Redis({ url, token });
-  return {
-    async get(identifier) {
-      const raw = await redis.get<UserRecord | string>(key(identifier));
-      if (!raw) return null;
-      // @upstash/redis auto-parses JSON when stored via .set with object,
-      // but returns the raw string when stored as a string. Cover both.
-      if (typeof raw === "string") {
-        try { return JSON.parse(raw) as UserRecord; } catch { return null; }
-      }
-      return raw;
-    },
-    async create(record) {
-      // NX: refuse to overwrite if the key already exists.
-      const ok = await redis.set(key(record.identifier), record, { nx: true });
-      if (ok === null) throw new Error("User already exists");
-    },
-    async has(identifier) {
-      return (await redis.exists(key(identifier))) === 1;
-    },
-  };
-}
-
-// Lazy singleton so the first call decides which backend to use.
-let storeImpl: UserStore | null = null;
-function store(): UserStore {
-  if (storeImpl) return storeImpl;
-  storeImpl = makeUpstashStore() ?? memoryStore;
-  return storeImpl;
-}
-
-export function hasPersistentStore(): boolean {
-  return makeUpstashStore() !== null;
-}
-
-// Public API ------------------------------------------------------------------
-
-export async function findUser(identifier: string): Promise<UserRecord | null> {
-  return store().get(identifier);
-}
-
-export async function userExists(identifier: string): Promise<boolean> {
-  return store().has(identifier);
-}
-
-export async function createUser(identifier: string, password: string): Promise<UserRecord> {
-  const trimmed = identifier.trim();
-  if (await store().has(trimmed)) {
-    throw new Error("User already exists");
+function getSecret(): string {
+  const s = process.env.BETTER_AUTH_SECRET;
+  if (!s || s.length < 16) {
+    throw new Error(
+      "BETTER_AUTH_SECRET is missing or too short. Set a ≥16-char secret in your env.",
+    );
   }
-  const record: UserRecord = {
-    id: crypto.randomUUID(),
-    identifier: trimmed,
-    passwordHash: bcrypt.hashSync(password, 10),
-    createdAt: Date.now(),
-  };
-  await store().create(record);
-  return record;
+  return s;
 }
 
-export function verifyPassword(record: UserRecord, password: string): boolean {
-  return bcrypt.compareSync(password, record.passwordHash);
+function b64url(buf: Buffer | string): string {
+  return Buffer.from(buf as string)
+    .toString("base64")
+    .replace(/=+$/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
+
+function b64urlDecode(s: string): Buffer {
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
+  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64");
+}
+
+function sign(payload: string, secret: string): string {
+  return b64url(createHmac("sha256", secret).update(payload).digest());
+}
+
+export function createAccountCookie(
+  username: string,
+  password: string,
+): { value: string; maxAge: number } {
+  const secret = getSecret();
+  const hash = bcrypt.hashSync(password, 10);
+  const payload = b64url(
+    JSON.stringify({ u: username, h: hash, iat: Math.floor(Date.now() / 1000) }),
+  );
+  const sig = sign(payload, secret);
+  return { value: `${payload}.${sig}`, maxAge: ACCOUNT_MAX_AGE_SECONDS };
+}
+
+export function verifyAccountCookie(
+  raw: string | undefined | null,
+): AccountPayload | null {
+  if (!raw) return null;
+  const parts = raw.split(".");
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+
+  let secret: string;
+  try {
+    secret = getSecret();
+  } catch {
+    return null;
+  }
+
+  const expected = sign(payload, secret);
+  const a = Buffer.from(expected);
+  const b = Buffer.from(sig);
+  if (a.length !== b.length) return null;
+  if (!timingSafeEqual(a, b)) return null;
+
+  try {
+    const decoded = JSON.parse(b64urlDecode(payload).toString("utf-8")) as Partial<AccountPayload>;
+    if (typeof decoded.u !== "string" || typeof decoded.h !== "string") return null;
+    return { u: decoded.u, h: decoded.h, iat: Number(decoded.iat ?? 0) };
+  } catch {
+    return null;
+  }
+}
+
+export function verifyPassword(account: AccountPayload, password: string): boolean {
+  try {
+    return bcrypt.compareSync(password, account.h);
+  } catch {
+    return false;
+  }
+}
+
+export function normaliseUsername(s: string): string {
+  return s.trim();
 }

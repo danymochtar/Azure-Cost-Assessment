@@ -3,19 +3,20 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { AlertCircle, AtSign, Cloud, Lock, UserPlus } from "lucide-react";
+import { AlertCircle, Cloud, Lock, User as UserIcon, UserPlus } from "lucide-react";
 
 export default function RegisterForm({ next }: { next: string }) {
   const router = useRouter();
-  const [identifier, setIdentifier] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
-  const passwordOk = password.length >= 8;
+  const usernameOk = username.trim().length >= 3;
+  const passwordOk = password.length >= 6;
   const matchOk = password === confirm;
-  const canSubmit = identifier.length >= 3 && passwordOk && matchOk && !pending;
+  const canSubmit = usernameOk && passwordOk && matchOk && !pending;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -26,7 +27,7 @@ export default function RegisterForm({ next }: { next: string }) {
       const resp = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier, password }),
+        body: JSON.stringify({ username: username.trim(), password }),
       });
       if (!resp.ok) {
         const data = (await resp.json().catch(() => ({}))) as { error?: string };
@@ -49,7 +50,7 @@ export default function RegisterForm({ next }: { next: string }) {
             <Cloud size={28} strokeWidth={2.4} />
           </div>
           <h1>Create account</h1>
-          <p>Sign up to start running assessments</p>
+          <p>Pick a username and password — no email needed</p>
         </div>
 
         {error && (
@@ -61,20 +62,21 @@ export default function RegisterForm({ next }: { next: string }) {
 
         <form className="login-form" onSubmit={submit}>
           <div className="field">
-            <label className="field-label" htmlFor="identifier">
-              <AtSign size={14} /> Email or username
+            <label className="field-label" htmlFor="username">
+              <UserIcon size={14} /> Username
             </label>
             <input
-              id="identifier"
+              id="username"
               type="text"
               autoComplete="username"
               autoCapitalize="none"
               autoCorrect="off"
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="you@example.com"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="e.g. dany"
               required
               autoFocus
+              minLength={3}
             />
           </div>
           <div className="field">
@@ -88,9 +90,18 @@ export default function RegisterForm({ next }: { next: string }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              minLength={6}
             />
-            <div className="helper" style={{ color: password.length === 0 || passwordOk ? "var(--text-muted)" : "var(--danger)" }}>
-              At least 8 characters
+            <div
+              className="helper"
+              style={{
+                color:
+                  password.length === 0 || passwordOk
+                    ? "var(--text-muted)"
+                    : "var(--danger)",
+              }}
+            >
+              At least 6 characters
             </div>
           </div>
           <div className="field">
@@ -132,7 +143,9 @@ export default function RegisterForm({ next }: { next: string }) {
 
         <div className="login-foot">
           Already have an account?{" "}
-          <Link href={`/login${next && next !== "/" ? `?next=${encodeURIComponent(next)}` : ""}`}>
+          <Link
+            href={`/login${next && next !== "/" ? `?next=${encodeURIComponent(next)}` : ""}`}
+          >
             Sign in
           </Link>
         </div>

@@ -1,56 +1,56 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createUser,
-  findUser,
-  hasPersistentStore,
-  userExists,
+  createAccountCookie,
+  verifyAccountCookie,
   verifyPassword,
 } from "@/lib/users";
 
-// Clear the in-memory map between tests so they're independent.
-function resetMemoryStore() {
-  const g = globalThis as unknown as { __azca_users?: Map<string, unknown> };
-  g.__azca_users?.clear();
-}
+const SECRET = "test-secret-at-least-32-chars-long-xxx";
 
-describe("user store (in-memory fallback)", () => {
+describe("account-record cookies", () => {
+  const original = process.env.BETTER_AUTH_SECRET;
+
   beforeEach(() => {
-    delete process.env.KV_REST_API_URL;
-    delete process.env.KV_REST_API_TOKEN;
-    delete process.env.UPSTASH_REDIS_REST_URL;
-    delete process.env.UPSTASH_REDIS_REST_TOKEN;
-    resetMemoryStore();
+    process.env.BETTER_AUTH_SECRET = SECRET;
   });
 
-  it("reports no persistent store when Upstash env is absent", () => {
-    expect(hasPersistentStore()).toBe(false);
+  afterEach(() => {
+    process.env.BETTER_AUTH_SECRET = original;
   });
 
-  it("creates and finds a user", async () => {
-    const rec = await createUser("alice@example.com", "hunter2!!");
-    expect(rec.identifier).toBe("alice@example.com");
-    expect(rec.passwordHash).not.toBe("hunter2!!");
-
-    const found = await findUser("alice@example.com");
-    expect(found?.id).toBe(rec.id);
+  it("round-trips a freshly created account", () => {
+    const { value } = createAccountCookie("alice", "hunter2!!");
+    const acc = verifyAccountCookie(value);
+    expect(acc).not.toBeNull();
+    expect(acc?.u).toBe("alice");
+    expect(acc?.h).toMatch(/^\$2[aby]\$/); // bcrypt prefix
+    expect(verifyPassword(acc!, "hunter2!!")).toBe(true);
+    expect(verifyPassword(acc!, "wrong-password")).toBe(false);
   });
 
-  it("treats identifiers case-insensitively", async () => {
-    await createUser("Bob@example.com", "hunter2!!");
-    expect(await userExists("bob@example.com")).toBe(true);
-    expect(await userExists("BOB@EXAMPLE.COM")).toBe(true);
+  it("rejects an empty / malformed cookie", () => {
+    expect(verifyAccountCookie(null)).toBeNull();
+    expect(verifyAccountCookie("")).toBeNull();
+    expect(verifyAccountCookie("not-a-real-cookie")).toBeNull();
+    expect(verifyAccountCookie("a.b.c")).toBeNull();
   });
 
-  it("rejects duplicate registration", async () => {
-    await createUser("carol@example.com", "hunter2!!");
-    await expect(createUser("carol@example.com", "different!")).rejects.toThrow(
-      /already exists/,
-    );
+  it("rejects a cookie signed with a different secret", () => {
+    const { value } = createAccountCookie("alice", "hunter2!!");
+    process.env.BETTER_AUTH_SECRET = "a-totally-different-secret-32xxxxxxxxxx";
+    expect(verifyAccountCookie(value)).toBeNull();
   });
 
-  it("verifies the correct password", async () => {
-    const rec = await createUser("dave@example.com", "hunter2!!");
-    expect(verifyPassword(rec, "hunter2!!")).toBe(true);
-    expect(verifyPassword(rec, "wrong-password")).toBe(false);
+  it("rejects a tampered payload", () => {
+    const { value } = createAccountCookie("alice", "hunter2!!");
+    const [payload, sig] = value.split(".");
+    const tampered = payload.slice(0, -1) + (payload.slice(-1) === "A" ? "B" : "A");
+    expect(verifyAccountCookie(`${tampered}.${sig}`)).toBeNull();
+  });
+
+  it("produces a different bcrypt hash each time (salted)", () => {
+    const a = createAccountCookie("alice", "hunter2!!");
+    const b = createAccountCookie("alice", "hunter2!!");
+    expect(a.value).not.toBe(b.value);
   });
 });

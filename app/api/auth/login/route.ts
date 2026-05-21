@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { z } from "zod";
 import {
   constantTimeEqualStr,
@@ -7,7 +8,12 @@ import {
   SESSION_COOKIE,
   SESSION_MAX_AGE_SECONDS,
 } from "@/lib/auth";
-import { findUser, verifyPassword } from "@/lib/users";
+import {
+  ACCOUNT_COOKIE,
+  normaliseUsername,
+  verifyAccountCookie,
+  verifyPassword,
+} from "@/lib/users";
 
 export const runtime = "nodejs";
 
@@ -16,7 +22,7 @@ const BodySchema = z.object({
   password: z.string().min(1),
 });
 
-function setSessionCookie(res: NextResponse, identifier: string) {
+function setSession(res: NextResponse, identifier: string) {
   const session = createSessionCookie(identifier);
   res.cookies.set({
     name: SESSION_COOKIE,
@@ -37,31 +43,41 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid credentials" }, { status: 400 });
   }
 
-  // 1. Look the identifier up in the persistent user store first.
-  try {
-    const record = await findUser(body.user);
-    if (record && verifyPassword(record, body.password)) {
+  const typedUser = normaliseUsername(body.user);
+
+  // 1. Try the per-browser account cookie. This is the registered-user path.
+  const ck = await cookies();
+  const account = verifyAccountCookie(ck.get(ACCOUNT_COOKIE)?.value);
+  if (account) {
+    const userOk = constantTimeEqualStr(typedUser, account.u);
+    const passOk = userOk && verifyPassword(account, body.password);
+    if (userOk && passOk) {
       const res = NextResponse.json({ ok: true });
-      setSessionCookie(res, record.identifier);
+      setSession(res, account.u);
       return res;
     }
-  } catch {
-    // KV failure shouldn't block the env-var fallback below.
   }
 
-  // 2. Fall back to the single env-var credential (bootstrap admin).
+  // 2. Bootstrap admin via env vars — always works regardless of cookies.
   try {
     const creds = getCredentials();
-    const userOk = constantTimeEqualStr(body.user, creds.user);
+    const userOk = constantTimeEqualStr(typedUser, creds.user);
     const passOk = constantTimeEqualStr(body.password, creds.password);
     if (userOk && passOk) {
       const res = NextResponse.json({ ok: true });
-      setSessionCookie(res, creds.user);
+      setSession(res, creds.user);
       return res;
     }
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 
-  return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+  return NextResponse.json(
+    {
+      error: account
+        ? "Wrong username or password."
+        : "No account on this browser. Create one with the Register button.",
+    },
+    { status: 401 },
+  );
 }
