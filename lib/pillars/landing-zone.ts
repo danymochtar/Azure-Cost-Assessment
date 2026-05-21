@@ -304,35 +304,35 @@ const FACTORIES: Record<string, LineFactory> = {
     resource: "Public IP — Standard × 1",
     sku: "public-ip-std",
     unit: "1 Hour", unitPrice: 0.005, quantity: 730, monthlyCost: 4,
-    assumption: "Static Standard Public IP × 1 at $0.005/hr × 730 ≈ $3.65. Outbound IP for the hub.",
+    assumption: "Static Standard Public IP × 1 at $0.005/hr × 730 ≈ $3.65. Picked Standard because Basic IP is retired for new deployments. Step up to a /28 IP Prefix when you need ≥16 static IPs (cheaper than 16 individual IPs). NOT included: outbound data transfer, NAT Gateway charges if you front the IP with one.",
   }),
   "nw-vpn-vpngw1": () => ({
     category: "Landing Zone · Networking",
     resource: "VPN Gateway — VpnGw1 (S2S to on-prem)",
     sku: "vpn-vpngw1",
     unit: "1 Hour", unitPrice: 0.19, quantity: 730, monthlyCost: 140,
-    assumption: "VpnGw1 ~$0.19/hr × 730 = $138.70. Egress to on-prem extra at $0.035–$0.087/GB (zone-dependent).",
+    assumption: "VpnGw1 ~$0.19/hr × 730 = $138.70. Picked VpnGw1 because it's the entry-level S2S gateway supporting 650 Mbps + 250 P2S clients — sufficient for most spoke connectivity. Step up to VpnGw2/3/4/5 for higher throughput (1/1.25/5/10 Gbps), or to ExpressRoute Gateway for private connectivity. NOT included: egress to on-prem ($0.035–$0.087/GB), point-to-site connection hours.",
   }),
   "nw-appgw-waf-v2": () => ({
     category: "Landing Zone · Networking",
     resource: "Application Gateway WAF v2 — small (2 capacity units)",
     sku: "appgw-waf-v2",
     unit: "1 Hour", unitPrice: 0.338, quantity: 730, monthlyCost: 247,
-    assumption: "Fixed $0.246/hr × 730 = $180 + 2 capacity units × $0.0144/hr × 730 = $21. Add WAF policy charges for OWASP rule sets.",
+    assumption: "Fixed $0.246/hr × 730 = $180 + 2 capacity units × $0.0144/hr × 730 = $21 = ~$247/mo. Picked WAF v2 over Standard v2 because OWASP managed rules ship out of the box. Step up the capacity unit count when sustained throughput exceeds ~10 RPS per unit. NOT included: WAF policy charges for custom rule sets, processed-data egress, certificate management.",
   }),
   "nw-bastion-std": () => ({
     category: "Landing Zone · Networking",
     resource: "Azure Bastion — Standard",
     sku: "bastion-standard",
     unit: "1 Hour", unitPrice: 0.30, quantity: 730, monthlyCost: 220,
-    assumption: "Bastion Standard $0.30/hr × 730 = $219 (host pool + 2 scale units assumed). Supports host scaling, native client, and IP-based connections.",
+    assumption: "Bastion Standard $0.30/hr × 730 = $219 (host pool + 2 scale units assumed). Picked Standard over Basic because Basic blocks host scaling and native-client RDP/SSH. Step up to Premium for shareable links + session recording. NOT included: outbound data transfer past the 5 GB free tier ($0.087/GB).",
   }),
   "nw-firewall-std-deploy": () => ({
     category: "Landing Zone · Networking",
     resource: "Azure Firewall — Standard (deployment)",
     sku: "firewall-std-deploy",
     unit: "1 Hour", unitPrice: 1.25, quantity: 730, monthlyCost: 912,
-    assumption: "Standard hub firewall deployment $1.25/hr × 730 = $912.50. Cluster of 2 underlying instances managed by Azure.",
+    assumption: "Standard hub firewall deployment $1.25/hr × 730 = $912.50. Picked Standard because it covers L3-L7 filtering + threat intelligence — sufficient for most non-regulated workloads. Step up to Premium for IDPS, TLS inspection, URL filtering, web categories. NOT included: data processed at $0.016/GB (separate line); zone redundancy is included.",
   }),
   "nw-firewall-std-data": (p) => {
     const gb = p.firewallDataGbPerMonth;
@@ -341,7 +341,7 @@ const FACTORIES: Record<string, LineFactory> = {
       resource: `Azure Firewall — Std data processed (${gb.toLocaleString()} GB/mo)`,
       sku: "firewall-std-data",
       unit: "1 GB", unitPrice: 0.016, quantity: gb, monthlyCost: gb * 0.016,
-      assumption: `${gb.toLocaleString()} GB × $0.016/GB. Adjust the data parameter to match your actual east-west + egress volume.`,
+      assumption: `${gb.toLocaleString()} GB × $0.016/GB. Picked Standard data rate ($0.016/GB) — same as Premium per-GB. Step up the data parameter to match observed east-west + egress volume; typical 50-VM hub lands closer to 3-10 TB/mo. NOT included: per-GB NAT charges (Standard hub uses Firewall's built-in NAT free).`,
     };
   },
   "nw-firewall-prem-deploy": () => ({
@@ -358,7 +358,7 @@ const FACTORIES: Record<string, LineFactory> = {
       resource: `Azure Firewall — Premium data processed (${gb.toLocaleString()} GB/mo)`,
       sku: "firewall-prem-data",
       unit: "1 GB", unitPrice: 0.016, quantity: gb, monthlyCost: gb * 0.016,
-      assumption: `${gb.toLocaleString()} GB × $0.016/GB. Premium firewall data is billed at the same per-GB rate as Standard.`,
+      assumption: `${gb.toLocaleString()} GB × $0.016/GB. Premium firewall data billed at the same per-GB rate as Standard — the premium fee lives on the deployment hours. Step up the data parameter when TLS inspection or large east-west traffic pushes throughput past the default 1 TB/mo. NOT included: IDPS signature updates (free), URL filtering category lookups (free).`,
     };
   },
   "nw-private-dns": (p) => {
@@ -368,7 +368,7 @@ const FACTORIES: Record<string, LineFactory> = {
       resource: `Private DNS Zones × ${n}`,
       sku: "private-dns",
       unit: "1/Month", unitPrice: 0.50, quantity: n, monthlyCost: n * 0.5,
-      assumption: `${n} zones × $0.50/zone. Add zones for each private endpoint family in use.`,
+      assumption: `${n} zones × $0.50/zone. Picked dedicated zones because Private Endpoints need one zone per PaaS service family (privatelink.blob.core.windows.net, privatelink.database.windows.net, etc.). Step up the zone count by one per new PaaS family. NOT included: query charges ($0.40/1M after 1B free queries).`,
     };
   },
   "nw-expressroute-circuit": () => ({
@@ -376,14 +376,14 @@ const FACTORIES: Record<string, LineFactory> = {
     resource: "ExpressRoute Circuit — Standard 1 Gbps (metered)",
     sku: "expressroute-std-1gbps",
     unit: "1/Month", unitPrice: 400, quantity: 1, monthlyCost: 400,
-    assumption: "Metered Standard 1 Gbps circuit ≈ $400/mo port. Outbound zone-egress charged per GB extra; Premium add-on priced separately.",
+    assumption: "Metered Standard 1 Gbps circuit ≈ $400/mo port. Picked metered over unlimited because most hybrid workloads stay under 5 TB/mo where metered is cheaper. Step up to the Premium add-on for global reach + larger route limits, or to unlimited billing when sustained egress > 10 TB/mo. NOT included: outbound zone-egress charged per GB; Premium add-on priced separately.",
   }),
   "nw-expressroute-gw": () => ({
     category: "Landing Zone · Networking",
     resource: "ExpressRoute Gateway — ErGw1AZ",
     sku: "expressroute-gw-ergw1az",
     unit: "1 Hour", unitPrice: 0.45, quantity: 730, monthlyCost: 330,
-    assumption: "ErGw1AZ $0.45/hr × 730 = $328.50. Terminates the ExpressRoute circuit inside the hub VNet.",
+    assumption: "ErGw1AZ $0.45/hr × 730 = $328.50. Picked ErGw1AZ as the smallest zone-redundant SKU — handles 1 Gbps throughput. Step up to ErGw2AZ ($0.90/hr) for 2 Gbps or ErGw3AZ for 10 Gbps. NOT included: FastPath ($0.25/hr extra), data egress at the circuit level.",
   }),
   "nw-private-endpoints": (p) => {
     const n = p.privateEndpointCount;
@@ -392,7 +392,7 @@ const FACTORIES: Record<string, LineFactory> = {
       resource: `Private Endpoints × ${n}`,
       sku: "private-endpoint",
       unit: "1 Hour", unitPrice: 0.01, quantity: n * 730, monthlyCost: n * 0.01 * 730,
-      assumption: `${n} endpoints × $0.01/hr × 730. Add ~$0.01/GB for data processed (excluded — usually a single-digit dollar adder).`,
+      assumption: `${n} endpoints × $0.01/hr × 730 ≈ $${(n * 7.3).toFixed(2)}/mo. Picked Private Endpoints because they pin PaaS access to the VNet (no public exposure) — required for compliance landings. Step up the count as new PaaS resources (Storage, SQL, Key Vault, ACR) come online; one endpoint per resource per subnet. NOT included: data-processed charge ($0.01/GB inbound + $0.01/GB outbound — usually a single-digit dollar adder), Private DNS zones (separate line).`,
     };
   },
   "sec-key-vault-std": () => ({
@@ -400,14 +400,14 @@ const FACTORIES: Record<string, LineFactory> = {
     resource: "Azure Key Vault — Standard",
     sku: "keyvault-std",
     unit: "1/Month", unitPrice: 3, quantity: 1, monthlyCost: 3,
-    assumption: "Standard vault for hub-managed secrets / certs / TLS. ~30k operations/month × $0.03/10k ≈ $0.10; padded to $3 for HSM-backed key allowance.",
+    assumption: "Standard vault for hub-managed secrets / certs / TLS. ~30k operations/month × $0.03/10k ≈ $0.10; padded to $3 for HSM-backed key allowance. Picked Standard because Premium ($1/key/mo + HSM ops) is only needed for FIPS 140-2 Level 2 or BYOK-into-Premium-SSD scenarios. Step up to Premium when you need HSM-backed keys for regulated workloads (PCI / FedRAMP / customer-managed keys). NOT included: certificate renewal fees from public CAs, advanced threat protection ($0.02/10k operations add-on).",
   }),
   "sec-ddos-network": () => ({
     category: "Landing Zone · Security",
     resource: "Azure DDoS Network Protection",
     sku: "ddos-network",
     unit: "1/Month", unitPrice: 2944, quantity: 1, monthlyCost: 2944,
-    assumption: "Tenant-level $2,944/mo flat covering the first 100 protected public IPs (each additional IP $30/mo).",
+    assumption: "Tenant-level $2,944/mo flat covering the first 100 protected public IPs (each additional IP $30/mo). Picked Network Protection because it covers an entire VNet (vs IP Protection which is per-IP, only cheaper below ~15 IPs). Step up to IP Protection only if you have <5 internet-facing IPs and want per-resource billing. NOT included: cost-protection SLA credits, rapid-response engagement (free with Network Protection but requires opening a ticket).",
   }),
   "sec-sentinel-payg": (p) => {
     const gb = p.sentinelGbPerMonth;
@@ -416,7 +416,7 @@ const FACTORIES: Record<string, LineFactory> = {
       resource: `Microsoft Sentinel — PAYG (${gb} GB/mo)`,
       sku: "sentinel-payg",
       unit: "1 GB", unitPrice: 4.60, quantity: gb, monthlyCost: gb * 4.6,
-      assumption: `${gb} GB ingestion × $4.60/GB (Sentinel + Log Analytics combined). Defender data sources flow in free where eligible.`,
+      assumption: `${gb} GB ingestion × $4.60/GB (Sentinel + Log Analytics combined). Picked PAYG because Commitment Tiers only break even above ~100 GB/day (~3 TB/mo). Step up to a Commitment Tier (100 GB/day → $123/day flat, ~17% discount) once steady-state ingestion is predictable. NOT included: longer retention beyond 90 days ($0.10/GB/mo archive), Defender for Cloud free-eligible data flows automatically.`,
     };
   },
   "mgmt-log-analytics-50gb": (p) => {
@@ -426,7 +426,7 @@ const FACTORIES: Record<string, LineFactory> = {
       resource: `Log Analytics workspace — ${gb} GB/mo`,
       sku: "log-analytics",
       unit: "1 GB", unitPrice: 2.30, quantity: gb, monthlyCost: gb * 2.3,
-      assumption: `${gb} GB × $2.30/GB after the 5 GB free quota. Scale with workload growth.`,
+      assumption: `${gb} GB × $2.30/GB after the 5 GB free quota. Picked PAYG because Commitment Tiers only break even at ≥100 GB/day. Step up to a Commitment Tier once steady-state ingestion is predictable, or layer Basic Logs ($0.50/GB ingestion + $0.005/GB query) for verbose / low-query telemetry. NOT included: extended retention beyond 31 days ($0.10/GB/mo), data export to Storage / Event Hub ($0.10/GB).`,
     };
   },
   "def-cspm": (p, inv) => {
@@ -439,7 +439,7 @@ const FACTORIES: Record<string, LineFactory> = {
       unit: "1/Month", unitPrice: DEFENDER_PRICES.cspmPerResource, quantity: billable,
       monthlyCost: billable * DEFENDER_PRICES.cspmPerResource,
       resourceCount: billable,
-      assumption: `${billable} billable resource${billable === 1 ? "" : "s"} × $${DEFENDER_PRICES.cspmPerResource.toFixed(2)}/mo (VMs ${inv.vmCount} + storage accounts ${p.storageAccountCount} + key vaults ${p.keyVaultCount}). Adds attack path analysis, agentless vulnerability scanning, regulatory compliance.`,
+      assumption: `${billable} billable resource${billable === 1 ? "" : "s"} × $${DEFENDER_PRICES.cspmPerResource.toFixed(2)}/mo (VMs ${inv.vmCount} + storage accounts ${p.storageAccountCount} + key vaults ${p.keyVaultCount}). Picked paid CSPM because Foundational CSPM (free) lacks attack-path analysis, agentless scanning, and regulatory compliance dashboards. Step up to Defender CSPM for any compliance-driven landing (PCI/ISO/SOC2); stay on Foundational only for sandboxes. NOT included: data-plane workload plans (Servers/Storage/SQL — those are separate lines).`,
     };
   },
   "def-resource-manager": () => ({
@@ -449,7 +449,7 @@ const FACTORIES: Record<string, LineFactory> = {
     unit: "1/Month", unitPrice: DEFENDER_PRICES.resourceManager, quantity: 1,
     monthlyCost: DEFENDER_PRICES.resourceManager,
     resourceCount: 1,
-    assumption: `Per-subscription plan at $${DEFENDER_PRICES.resourceManager.toFixed(2)}/mo. Detects malicious Resource Manager operations.`,
+    assumption: `Per-subscription plan at $${DEFENDER_PRICES.resourceManager.toFixed(2)}/mo. Picked because it's the only ARM-control-plane detection (privilege escalation, suspicious template deploys, key exfiltration via Run Command). Step up by enabling on every prod subscription — the plan is cheap and noise-free. NOT included: response automation (wire Logic Apps / Sentinel playbooks separately).`,
   }),
   "def-servers-p1": (_p, inv) => {
     if (inv.vmCount === 0) return null;
@@ -460,7 +460,7 @@ const FACTORIES: Record<string, LineFactory> = {
       unit: "1/Month", unitPrice: DEFENDER_PRICES.serversP1, quantity: inv.vmCount,
       monthlyCost: inv.vmCount * DEFENDER_PRICES.serversP1,
       resourceCount: inv.vmCount,
-      assumption: `$${DEFENDER_PRICES.serversP1.toFixed(2)}/VM/mo × ${inv.vmCount} VM${inv.vmCount === 1 ? "" : "s"}. EDR-focused: Defender for Endpoint integration, alerts, software inventory.`,
+      assumption: `$${DEFENDER_PRICES.serversP1.toFixed(2)}/VM/mo × ${inv.vmCount} VM${inv.vmCount === 1 ? "" : "s"}. Picked P1 because it bundles Defender for Endpoint (MDE) EDR at ~half the price of standalone MDE for Servers licensing. Step up to P2 for agentless disk scanning, file-integrity monitoring (FIM), JIT VM access, and free Defender for DNS — required for most regulated landings. NOT included: vulnerability assessment for unmanaged servers, Arc-enabled non-Azure VM coverage costs the same.`,
     };
   },
   "def-servers-p2": (_p, inv) => {
@@ -472,7 +472,7 @@ const FACTORIES: Record<string, LineFactory> = {
       unit: "1/Month", unitPrice: DEFENDER_PRICES.serversP2, quantity: inv.vmCount,
       monthlyCost: inv.vmCount * DEFENDER_PRICES.serversP2,
       resourceCount: inv.vmCount,
-      assumption: `$${DEFENDER_PRICES.serversP2.toFixed(2)}/VM/mo × ${inv.vmCount} VM${inv.vmCount === 1 ? "" : "s"}. Adds agentless disk scanning, file integrity monitoring, just-in-time VM access, regulatory compliance, free Defender for DNS.`,
+      assumption: `$${DEFENDER_PRICES.serversP2.toFixed(2)}/VM/mo × ${inv.vmCount} VM${inv.vmCount === 1 ? "" : "s"}. Picked P2 because it adds agentless disk scanning, FIM, JIT VM access, regulatory compliance dashboards, and free Defender for DNS — the enterprise baseline. Step down to P1 only for cost-sensitive dev/test where EDR alone is enough. NOT included: SQL on Machines (separate line), workload-specific add-ons.`,
     };
   },
   "def-sql-on-machines": (_p, inv) => {
@@ -484,7 +484,7 @@ const FACTORIES: Record<string, LineFactory> = {
       unit: "1/Month", unitPrice: DEFENDER_PRICES.sqlOnMachinePerServer, quantity: inv.sqlVmCount,
       monthlyCost: inv.sqlVmCount * DEFENDER_PRICES.sqlOnMachinePerServer,
       resourceCount: inv.sqlVmCount,
-      assumption: `$${DEFENDER_PRICES.sqlOnMachinePerServer.toFixed(2)}/server/mo × ${inv.sqlVmCount} SQL-bearing VM${inv.sqlVmCount === 1 ? "" : "s"}. Detects SQL-injection, brute-force, anomalous queries.`,
+      assumption: `$${DEFENDER_PRICES.sqlOnMachinePerServer.toFixed(2)}/server/mo × ${inv.sqlVmCount} SQL-bearing VM${inv.sqlVmCount === 1 ? "" : "s"}. Picked Defender for SQL on Machines because SQL Server hosted on IaaS isn't covered by Defender for Servers' SQL detections. Step up by also enabling Defender for SQL on managed Azure SQL DBs / MIs (priced separately per DTU/vCore). NOT included: TDE / Always Encrypted (those are SQL features, not threat-detection).`,
     };
   },
   "def-storage": (p) => {
@@ -496,7 +496,7 @@ const FACTORIES: Record<string, LineFactory> = {
       unit: "1/Month", unitPrice: DEFENDER_PRICES.storagePerAccount, quantity: n,
       monthlyCost: n * DEFENDER_PRICES.storagePerAccount,
       resourceCount: n,
-      assumption: `$${DEFENDER_PRICES.storagePerAccount.toFixed(2)}/storage account/mo × ${n}. Malware scanning ($0.15/GB scanned, cappable) priced separately if enabled.`,
+      assumption: `$${DEFENDER_PRICES.storagePerAccount.toFixed(2)}/storage account/mo × ${n}. Picked per-storage-account plan because the per-transaction plan (legacy) costs more above ~1M ops/mo. Step up by enabling malware scanning ($0.15/GB scanned, with a daily/monthly cap) on accounts that ingest user uploads. NOT included: data-plane Azure Storage costs, sensitive-data discovery (covered by Defender CSPM).`,
     };
   },
   "def-keyvault": (p) => {
@@ -508,7 +508,7 @@ const FACTORIES: Record<string, LineFactory> = {
       unit: "1/Month", unitPrice: DEFENDER_PRICES.keyVaultPerVault, quantity: n,
       monthlyCost: n * DEFENDER_PRICES.keyVaultPerVault,
       resourceCount: n,
-      assumption: `$${DEFENDER_PRICES.keyVaultPerVault.toFixed(2)}/vault/mo × ${n}. Detects anomalous Key Vault access patterns.`,
+      assumption: `$${DEFENDER_PRICES.keyVaultPerVault.toFixed(2)}/vault/mo × ${n}. Picked per-vault plan because the legacy per-transaction model overshot once vaults exceeded ~5M ops/mo. Step up by enabling on every vault holding production secrets / certs — the alert noise is low and integrates with Sentinel. NOT included: Key Vault data-plane operation charges, HSM-backed key pricing (Premium SKU only).`,
     };
   },
   "def-containers": (p) => {
@@ -520,7 +520,7 @@ const FACTORIES: Record<string, LineFactory> = {
       unit: "1/Month", unitPrice: DEFENDER_PRICES.containersPerVCore, quantity: n,
       monthlyCost: n * DEFENDER_PRICES.containersPerVCore,
       resourceCount: n,
-      assumption: `$${DEFENDER_PRICES.containersPerVCore.toFixed(2)}/Kubernetes vCore/mo × ${n}. Adds Kubernetes hardening, vulnerability assessment, runtime threat detection.`,
+      assumption: `$${DEFENDER_PRICES.containersPerVCore.toFixed(2)}/Kubernetes vCore/mo × ${n}. Picked vCore-based pricing because it scales linearly with cluster size (no per-pod overhead). Step up the vCore count as the AKS node pool grows; Arc-enabled K8s on-prem clusters use the same meter. NOT included: registry-side scanning is included for ACR Premium but a separate Defender add-on for non-ACR registries; runtime EDR for non-K8s containers needs Defender for App Service or Servers.`,
     };
   },
   "def-app-service": (p) => {
@@ -532,7 +532,7 @@ const FACTORIES: Record<string, LineFactory> = {
       unit: "1/Month", unitPrice: DEFENDER_PRICES.appServicePerApp, quantity: n,
       monthlyCost: n * DEFENDER_PRICES.appServicePerApp,
       resourceCount: n,
-      assumption: `$${DEFENDER_PRICES.appServicePerApp.toFixed(2)}/App Service/mo × ${n}. Detects suspicious uploads, web shells, anomalous request patterns.`,
+      assumption: `$${DEFENDER_PRICES.appServicePerApp.toFixed(2)}/App Service/mo × ${n}. Picked because App Service workloads aren't covered by Defender for Servers (PaaS host fleet is Microsoft-managed). Step up by enabling on every prod web app — particularly those accepting file uploads or admin portals. NOT included: WAF (Front Door / App Gateway), upstream DDoS protection.`,
     };
   },
 };

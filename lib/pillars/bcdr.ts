@@ -62,7 +62,7 @@ export function buildBcdrBom(items: InventoryItem[], opts: BcdrOptions): BomLine
     resourceCount: vmCount,
     billingTerm: "PAYG",
     workloadNames: names,
-    assumption: `$${PROTECTED_INSTANCE_PER_MONTH.toFixed(2)}/VM/mo × ${vmCount} VMs (Azure-to-Azure). First 31 days free per instance — steady-state cost shown.`,
+    assumption: `$${PROTECTED_INSTANCE_PER_MONTH.toFixed(2)}/VM/mo × ${vmCount} VMs (Azure-to-Azure). Picked A2A because the workloads are landing in Azure — VMware/Hyper-V-to-Azure scenarios use the same license fee but add a configuration server. Step up by enabling test-failover drills quarterly (compute spun up only during the drill — not part of steady-state). NOT included: DR-drill compute / disk burst, target-region egress during failback, network change automation.`,
   });
 
   // Replica disk storage in the target region — Standard SSD baseline.
@@ -86,7 +86,7 @@ export function buildBcdrBom(items: InventoryItem[], opts: BcdrOptions): BomLine
       resourceCount: vmCount,
       billingTerm: "PAYG",
     workloadNames: names,
-      assumption: `${totalStorageGb.toFixed(0)} GB × $${REPLICA_DISK_USD_PER_GB_MONTH.toFixed(3)}/GB/mo (Standard SSD baseline). Premium SSD source disks would land closer to $0.135/GB.`,
+      assumption: `${totalStorageGb.toFixed(0)} GB × $${REPLICA_DISK_USD_PER_GB_MONTH.toFixed(3)}/GB/mo (Standard SSD baseline). Picked Standard SSD because A2A defaults source-Premium disks to Premium replicas only if you opt in — Standard SSD is the cheapest credible replica tier. Step up to Premium replicas for sub-1-ms RPO targets on tier-1 DBs. NOT included: snapshot retention beyond the rolling 24 h, cross-region bandwidth (Microsoft absorbs replication traffic).`,
     });
   }
 
@@ -110,7 +110,7 @@ export function buildBcdrBom(items: InventoryItem[], opts: BcdrOptions): BomLine
     resourceCount: 1,
     billingTerm: "PAYG",
     workloadNames: names,
-    assumption: `~$${CACHE_STORAGE_PER_VM.toFixed(2)}/VM/mo for delta-replication staging (GPv2 SA). Spike higher under high churn (use Premium Block Blob).`,
+    assumption: `~$${CACHE_STORAGE_PER_VM.toFixed(2)}/VM/mo for delta-replication staging (GPv2 SA). Picked GPv2 standard because cache turnover is fast and high-tier storage adds no recovery benefit. Step up to Premium Block Blob when source-disk churn is high (>500 IOPS sustained) and cache becomes the bottleneck. NOT included: storage transactions (typically <$1/VM/mo), reader/writer egress (intra-region — free).`,
   });
 
   return lines;
