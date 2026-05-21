@@ -47,7 +47,7 @@ export function buildBcdrBom(items: InventoryItem[], opts: BcdrOptions): BomLine
   lines.push({
     ...emptyBomLine(),
     category: "BCDR · Site Recovery",
-    resource: `Azure Site Recovery — Protected Instance License × ${vmCount} VM${vmCount === 1 ? "" : "s"}`,
+    resource: "Azure Site Recovery — Protected Instance License",
     sku: "asr-protected-instance",
     meter: "asr-protected-instance",
     region: opts.region,
