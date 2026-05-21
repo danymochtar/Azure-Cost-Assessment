@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Tooltip } from "@/components/Tooltip";
-import { AZURE_REGIONS, DEFAULT_REGION, regionLabel } from "@/lib/constants";
+import { DEFAULT_REGION, regionLabel, regionsByGeography } from "@/lib/constants";
 import type { AssessmentProfile, BomLine, ComputeMode, InventoryItem, PricingMode } from "@/lib/models";
 
 const MAX_TOTAL_UPLOAD_MB = 4;
@@ -486,8 +486,12 @@ export default function AssessmentApp({ user }: { user: string }) {
               />
             </label>
             <select id="region" value={region} onChange={(e) => setRegion(e.target.value)}>
-              {AZURE_REGIONS.map((r) => (
-                <option key={r} value={r}>{regionLabel(r)}</option>
+              {regionsByGeography().map(({ geography, regions }) => (
+                <optgroup key={geography} label={geography}>
+                  {regions.map((r) => (
+                    <option key={r} value={r}>{regionLabel(r)}</option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>

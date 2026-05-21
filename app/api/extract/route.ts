@@ -42,6 +42,17 @@ export async function POST(req: Request) {
         merged.push(it);
       }
       if (r.summary) warnings.push(`${name}: ${r.summary}`);
+      // Surface model escalation so the user sees Haiku → Sonnet → Opus path
+      const modelShort = (m?: string) =>
+        m?.includes("haiku") ? "Haiku" : m?.includes("sonnet") ? "Sonnet" : m?.includes("opus") ? "Opus" : m;
+      if (r.modelUsed && r.modelUsed !== "claude-haiku-4-5") {
+        warnings.push(
+          `${name}: escalated to ${modelShort(r.modelUsed)} after weaker model(s) returned incomplete data.`,
+        );
+      }
+      if (r.mode === "failed") {
+        warnings.push(`${name}: extraction failed across Haiku → Sonnet → Opus — re-share the file with cell values populated.`);
+      }
     }
 
     return NextResponse.json({ items: merged, warnings });

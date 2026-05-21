@@ -29,67 +29,138 @@ export const REGION_FALLBACKS: Record<string, string[]> = {
   malaysiawest: ["southeastasia"],
 };
 
+// Region display names follow Microsoft's official Azure portal naming
+// (https://learn.microsoft.com/en-us/azure/reliability/regions-list).
+// No emoji, no geo prefix, no city tag — just the canonical display name.
 export const REGION_LABELS: Record<string, string> = {
-  eastus: "🌎 Americas — East US (Virginia)",
-  eastus2: "🌎 Americas — East US 2 (Virginia)",
-  westus: "🌎 Americas — West US (California)",
-  westus2: "🌎 Americas — West US 2 (Washington)",
-  westus3: "🌎 Americas — West US 3 (Arizona)",
-  centralus: "🌎 Americas — Central US (Iowa)",
-  southcentralus: "🌎 Americas — South Central US (Texas)",
-  northcentralus: "🌎 Americas — North Central US (Illinois)",
-  westcentralus: "🌎 Americas — West Central US (Wyoming)",
-  canadacentral: "🌎 Americas — Canada Central (Toronto)",
-  canadaeast: "🌎 Americas — Canada East (Quebec)",
-  brazilsouth: "🌎 Americas — Brazil South (São Paulo)",
-  mexicocentral: "🌎 Americas — Mexico Central",
-  chilecentral: "🌎 Americas — Chile Central",
-  northeurope: "🇪🇺 Europe — North Europe (Ireland)",
-  westeurope: "🇪🇺 Europe — West Europe (Netherlands)",
-  uksouth: "🇪🇺 Europe — UK South (London)",
-  ukwest: "🇪🇺 Europe — UK West (Cardiff)",
-  francecentral: "🇪🇺 Europe — France Central (Paris)",
-  francesouth: "🇪🇺 Europe — France South (Marseille)",
-  germanywestcentral: "🇪🇺 Europe — Germany West Central (Frankfurt)",
-  germanynorth: "🇪🇺 Europe — Germany North (Berlin)",
-  switzerlandnorth: "🇪🇺 Europe — Switzerland North (Zurich)",
-  switzerlandwest: "🇪🇺 Europe — Switzerland West (Geneva)",
-  norwayeast: "🇪🇺 Europe — Norway East (Oslo)",
-  norwaywest: "🇪🇺 Europe — Norway West (Stavanger)",
-  swedencentral: "🇪🇺 Europe — Sweden Central (Gävle)",
-  swedensouth: "🇪🇺 Europe — Sweden South (Malmö)",
-  polandcentral: "🇪🇺 Europe — Poland Central (Warsaw)",
-  italynorth: "🇪🇺 Europe — Italy North (Milan)",
-  spaincentral: "🇪🇺 Europe — Spain Central (Madrid)",
-  uaenorth: "🌍 MEA — UAE North (Dubai)",
-  uaecentral: "🌍 MEA — UAE Central (Abu Dhabi)",
-  qatarcentral: "🌍 MEA — Qatar Central (Doha)",
-  israelcentral: "🌍 MEA — Israel Central",
-  southafricanorth: "🌍 MEA — South Africa North (Johannesburg)",
-  southafricawest: "🌍 MEA — South Africa West (Cape Town)",
-  southeastasia: "🌏 APAC — Southeast Asia (Singapore)",
-  eastasia: "🌏 APAC — East Asia (Hong Kong)",
-  japaneast: "🌏 APAC — Japan East (Tokyo)",
-  japanwest: "🌏 APAC — Japan West (Osaka)",
-  australiaeast: "🌏 APAC — Australia East (NSW)",
-  australiasoutheast: "🌏 APAC — Australia Southeast (Victoria)",
-  australiacentral: "🌏 APAC — Australia Central (Canberra)",
-  australiacentral2: "🌏 APAC — Australia Central 2 (Canberra)",
-  koreacentral: "🌏 APAC — Korea Central (Seoul)",
-  koreasouth: "🌏 APAC — Korea South (Busan)",
-  centralindia: "🌏 APAC — Central India (Pune)",
-  southindia: "🌏 APAC — South India (Chennai)",
-  westindia: "🌏 APAC — West India (Mumbai)",
-  jioindiacentral: "🌏 APAC — Jio India Central",
-  jioindiawest: "🌏 APAC — Jio India West",
-  malaysiawest: "🌏 APAC — Malaysia West (Kuala Lumpur)",
-  indonesiacentral: "🌏 APAC — Indonesia Central (Jakarta)",
-  newzealandnorth: "🌏 APAC — New Zealand North (Auckland)",
-  taiwannorth: "🌏 APAC — Taiwan North (Taipei)",
+  // Americas
+  eastus: "East US",
+  eastus2: "East US 2",
+  westus: "West US",
+  westus2: "West US 2",
+  westus3: "West US 3",
+  centralus: "Central US",
+  southcentralus: "South Central US",
+  northcentralus: "North Central US",
+  westcentralus: "West Central US",
+  canadacentral: "Canada Central",
+  canadaeast: "Canada East",
+  brazilsouth: "Brazil South",
+  mexicocentral: "Mexico Central",
+  chilecentral: "Chile Central",
+  // Europe
+  northeurope: "North Europe",
+  westeurope: "West Europe",
+  uksouth: "UK South",
+  ukwest: "UK West",
+  francecentral: "France Central",
+  francesouth: "France South",
+  germanywestcentral: "Germany West Central",
+  germanynorth: "Germany North",
+  switzerlandnorth: "Switzerland North",
+  switzerlandwest: "Switzerland West",
+  norwayeast: "Norway East",
+  norwaywest: "Norway West",
+  swedencentral: "Sweden Central",
+  swedensouth: "Sweden South",
+  polandcentral: "Poland Central",
+  italynorth: "Italy North",
+  spaincentral: "Spain Central",
+  // Middle East & Africa
+  uaenorth: "UAE North",
+  uaecentral: "UAE Central",
+  qatarcentral: "Qatar Central",
+  israelcentral: "Israel Central",
+  southafricanorth: "South Africa North",
+  southafricawest: "South Africa West",
+  // Asia Pacific
+  southeastasia: "Southeast Asia",
+  eastasia: "East Asia",
+  japaneast: "Japan East",
+  japanwest: "Japan West",
+  australiaeast: "Australia East",
+  australiasoutheast: "Australia Southeast",
+  australiacentral: "Australia Central",
+  australiacentral2: "Australia Central 2",
+  koreacentral: "Korea Central",
+  koreasouth: "Korea South",
+  centralindia: "Central India",
+  southindia: "South India",
+  westindia: "West India",
+  jioindiacentral: "Jio India Central",
+  jioindiawest: "Jio India West",
+  malaysiawest: "Malaysia West",
+  indonesiacentral: "Indonesia Central",
+  newzealandnorth: "New Zealand North",
+  taiwannorth: "Taiwan North",
 };
 
 export function regionLabel(arm: string): string {
   return REGION_LABELS[arm] ?? arm;
+}
+
+// Microsoft's geography grouping. Source:
+//   https://learn.microsoft.com/en-us/azure/reliability/regions-list
+// Used to render the region picker with <optgroup> headers so the
+// 50+ entry list stays scannable on a phone-sized native select.
+export type AzureGeography = "Americas" | "Europe" | "Middle East & Africa" | "Asia Pacific";
+
+export const REGION_GEOGRAPHY: Record<string, AzureGeography> = {
+  // Americas
+  eastus: "Americas", eastus2: "Americas",
+  westus: "Americas", westus2: "Americas", westus3: "Americas",
+  centralus: "Americas", southcentralus: "Americas",
+  northcentralus: "Americas", westcentralus: "Americas",
+  canadacentral: "Americas", canadaeast: "Americas",
+  brazilsouth: "Americas", mexicocentral: "Americas",
+  chilecentral: "Americas",
+  // Europe
+  northeurope: "Europe", westeurope: "Europe",
+  uksouth: "Europe", ukwest: "Europe",
+  francecentral: "Europe", francesouth: "Europe",
+  germanywestcentral: "Europe", germanynorth: "Europe",
+  switzerlandnorth: "Europe", switzerlandwest: "Europe",
+  norwayeast: "Europe", norwaywest: "Europe",
+  swedencentral: "Europe", swedensouth: "Europe",
+  polandcentral: "Europe", italynorth: "Europe",
+  spaincentral: "Europe",
+  // Middle East & Africa
+  uaenorth: "Middle East & Africa", uaecentral: "Middle East & Africa",
+  qatarcentral: "Middle East & Africa", israelcentral: "Middle East & Africa",
+  southafricanorth: "Middle East & Africa", southafricawest: "Middle East & Africa",
+  // Asia Pacific
+  southeastasia: "Asia Pacific", eastasia: "Asia Pacific",
+  japaneast: "Asia Pacific", japanwest: "Asia Pacific",
+  australiaeast: "Asia Pacific", australiasoutheast: "Asia Pacific",
+  australiacentral: "Asia Pacific", australiacentral2: "Asia Pacific",
+  koreacentral: "Asia Pacific", koreasouth: "Asia Pacific",
+  centralindia: "Asia Pacific", southindia: "Asia Pacific", westindia: "Asia Pacific",
+  jioindiacentral: "Asia Pacific", jioindiawest: "Asia Pacific",
+  malaysiawest: "Asia Pacific", indonesiacentral: "Asia Pacific",
+  newzealandnorth: "Asia Pacific", taiwannorth: "Asia Pacific",
+};
+
+export const GEOGRAPHY_ORDER: AzureGeography[] = [
+  "Americas",
+  "Europe",
+  "Middle East & Africa",
+  "Asia Pacific",
+];
+
+/** Returns regions grouped by Azure geography in canonical order, preserving
+ *  the order regions appear in AZURE_REGIONS within each group. */
+export function regionsByGeography(): Array<{ geography: AzureGeography; regions: readonly string[] }> {
+  const buckets: Record<AzureGeography, string[]> = {
+    "Americas": [],
+    "Europe": [],
+    "Middle East & Africa": [],
+    "Asia Pacific": [],
+  };
+  for (const r of AZURE_REGIONS) {
+    const g = REGION_GEOGRAPHY[r];
+    if (g) buckets[g].push(r);
+  }
+  return GEOGRAPHY_ORDER.map((g) => ({ geography: g, regions: buckets[g] }));
 }
 
 export const COMPUTE_MODE_LABELS: Record<ComputeMode, string> = {

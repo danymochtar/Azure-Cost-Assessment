@@ -93,7 +93,7 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
     out.push(cur);
     return out;
   };
-  const headers = splitRow(lines[0]).map((h) => h.trim());
+  const headers = uniqueHeadersLocal(splitRow(lines[0]).map((h) => h.trim()));
   const rows: Record<string, string>[] = [];
   for (let i = 1; i < lines.length; i += 1) {
     const cells = splitRow(lines[i]);
@@ -102,6 +102,31 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
     rows.push(r);
   }
   return { headers, rows };
+}
+
+function uniqueHeadersLocal(raw: string[]): string[] {
+  const seen = new Map<string, number>();
+  return raw.map((h, idx) => {
+    const base = (h || `Column ${String.fromCharCode(65 + idx)}`).trim();
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return count === 0 ? base : `${base} (${count + 1})`;
+  });
+}
+
+// Pivoted spreadsheets sometimes use the SAME header text on two
+// adjacent columns (e.g. both labelled "YM ERP server with hyper-v",
+// where one column holds row labels and the other holds the values).
+// Naively keying rows by header name collapses those columns and
+// loses one side. Disambiguate by appending an index suffix.
+function uniqueHeaders(raw: string[]): string[] {
+  const seen = new Map<string, number>();
+  return raw.map((h, idx) => {
+    const base = (h || `Column ${String.fromCharCode(65 + idx)}`).trim();
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return count === 0 ? base : `${base} (${count + 1})`;
+  });
 }
 
 async function readWorkbook(data: Buffer, filename: string) {
@@ -119,7 +144,7 @@ async function readWorkbook(data: Buffer, filename: string) {
       sheets.push({ name: ws.name, headers: [], rows: [] });
       return;
     }
-    const headers = allRows[0].map((h) => String(h ?? ""));
+    const headers = uniqueHeaders(allRows[0].map((h) => String(h ?? "")));
     const rows = allRows.slice(1).map((arr) => {
       const r: Record<string, unknown> = {};
       headers.forEach((h, i) => {
