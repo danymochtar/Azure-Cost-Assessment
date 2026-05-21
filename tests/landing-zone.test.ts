@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLandingZoneBom,
+  buildLandingZoneBomFromComponents,
   LANDING_ZONE_LABELS,
+  LZ_COMPONENTS,
+  LZ_TIER_COMPONENTS,
   summariseInventory,
   type LandingZoneTier,
 } from "@/lib/pillars/landing-zone";
@@ -161,6 +164,64 @@ describe("buildLandingZoneBom", () => {
       ]);
       expect(s.vmCount).toBe(3);
       expect(s.sqlVmCount).toBe(2);
+    });
+  });
+
+  describe("Customize components", () => {
+    it("LZ_TIER_COMPONENTS only references ids that exist in LZ_COMPONENTS", () => {
+      const valid = new Set(LZ_COMPONENTS.map((c) => c.id));
+      for (const tier of ["basic", "standard", "enterprise"] as const) {
+        for (const id of LZ_TIER_COMPONENTS[tier]) {
+          expect(valid.has(id)).toBe(true);
+        }
+      }
+    });
+
+    it("buildLandingZoneBomFromComponents respects an explicit picked set", () => {
+      const inv = [mkVm("v1")];
+      const picked = ["nw-public-ip-std", "def-servers-p2"]; // mix preset + scaled
+      const lines = buildLandingZoneBomFromComponents(picked, "eastus2", "Demo", inv);
+      expect(lines).toHaveLength(2);
+      expect(lines.find((l) => l.resource.startsWith("Public IP"))).toBeDefined();
+      const p2 = lines.find((l) => l.resource.includes("Servers Plan 2"));
+      expect(p2).toBeDefined();
+      expect(p2!.monthlyCost).toBe(15);
+    });
+
+    it("dropping nw-vpn-vpngw1 from Standard removes the VPN line", () => {
+      const tier: LandingZoneTier = "standard";
+      const customised = LZ_TIER_COMPONENTS[tier].filter((id) => id !== "nw-vpn-vpngw1");
+      const lines = buildLandingZoneBomFromComponents(
+        customised, "eastus2", "Demo", [mkVm("v1")], undefined, tier,
+      );
+      expect(lines.find((l) => l.resource.startsWith("VPN Gateway"))).toBeUndefined();
+    });
+
+    it("adding sec-sentinel-payg to Basic surfaces the Sentinel line", () => {
+      const tier: LandingZoneTier = "basic";
+      const customised = [...LZ_TIER_COMPONENTS[tier], "sec-sentinel-payg"];
+      const lines = buildLandingZoneBomFromComponents(
+        customised, "eastus2", "Demo", [mkVm("v1")], undefined, tier,
+      );
+      const sentinel = lines.find((l) => l.resource.startsWith("Microsoft Sentinel"));
+      expect(sentinel).toBeDefined();
+      expect(sentinel!.monthlyCost).toBe(230);
+    });
+
+    it("landingZoneParams overrides default quantities", () => {
+      const tier: LandingZoneTier = "enterprise";
+      const lines = buildLandingZoneBomFromComponents(
+        ["nw-firewall-prem-data", "sec-sentinel-payg", "mgmt-log-analytics-50gb"],
+        "eastus2", "Demo", [mkVm("v1")],
+        { firewallDataGbPerMonth: 5120, sentinelGbPerMonth: 100, logAnalyticsGbPerMonth: 100 },
+        tier,
+      );
+      const fwData = lines.find((l) => l.resource.includes("Premium data processed"));
+      expect(fwData!.monthlyCost).toBeCloseTo(5120 * 0.016, 2);
+      const sentinel = lines.find((l) => l.resource.startsWith("Microsoft Sentinel"));
+      expect(sentinel!.monthlyCost).toBeCloseTo(100 * 4.6, 2);
+      const la = lines.find((l) => l.resource.startsWith("Log Analytics"));
+      expect(la!.monthlyCost).toBeCloseTo(100 * 2.3, 2);
     });
   });
 });

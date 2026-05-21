@@ -14,7 +14,10 @@ import { DEFAULT_REGION, regionLabel, regionsByGeography } from "@/lib/constants
 import {
   LANDING_ZONE_DESCRIPTIONS,
   LANDING_ZONE_LABELS,
+  LZ_COMPONENTS,
+  LZ_TIER_COMPONENTS,
   type LandingZoneTier,
+  type LzCategory,
 } from "@/lib/pillars/landing-zone";
 import type { AssessmentProfile, BomLine, ComputeMode, InventoryItem, Notice, PricingMode } from "@/lib/models";
 import { emptyUsage, mergeUsage, type UsageTotal } from "@/lib/usage";
@@ -226,6 +229,49 @@ function NoticePill({ n }: { n: Notice }) {
   );
 }
 
+// CAF Landing Zone component checklist. Grouped by category, each row
+// a checkbox + label + small description. Used by Stage 3 when the user
+// flips "Customize components" on.
+function LzComponentChecklist({
+  selected,
+  onToggle,
+}: {
+  selected: Set<string>;
+  onToggle: (id: string, checked: boolean) => void;
+}) {
+  const byCategory = new Map<LzCategory, typeof LZ_COMPONENTS>();
+  for (const c of LZ_COMPONENTS) {
+    const list = byCategory.get(c.category) ?? [];
+    list.push(c);
+    byCategory.set(c.category, list);
+  }
+  const order: LzCategory[] = ["Networking", "Security", "Management", "Defender for Cloud"];
+  return (
+    <div className="lz-checklist">
+      {order.map((cat) => {
+        const items = byCategory.get(cat) ?? [];
+        if (items.length === 0) return null;
+        return (
+          <div key={cat} className="lz-checklist-group">
+            <div className="lz-checklist-head">{cat}</div>
+            {items.map((c) => (
+              <label key={c.id} className="lz-checklist-row">
+                <input
+                  type="checkbox"
+                  checked={selected.has(c.id)}
+                  onChange={(e) => onToggle(c.id, e.target.checked)}
+                />
+                <span className="lz-checklist-label">{c.label}</span>
+                <span className="lz-checklist-desc">{c.description}</span>
+              </label>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Token-spend recap for the AI calls (classify + extract) that produced
 // this assessment. Pricing comes from lib/usage.ts — Anthropic public
 // list rates per million tokens.
@@ -339,6 +385,21 @@ export default function AssessmentApp({ user }: { user: string }) {
   // ExpressRoute, etc.) to every workload BOM. Defaults to "none" so the
   // estimate matches existing behaviour until the user picks a tier.
   const [landingZoneTier, setLandingZoneTier] = useState<LandingZoneTier>("none");
+  // Customize-components mode for the Landing Zone picker. When off,
+  // pricing uses the tier preset; when on, the explicit `lzComponents`
+  // set drives the BOM.
+  const [lzCustomize, setLzCustomize] = useState(false);
+  const [lzComponents, setLzComponents] = useState<Set<string>>(new Set());
+
+  // Whenever the tier changes (or the user flips into customize mode)
+  // seed the component checklist with that tier's defaults. The user
+  // can then toggle individual items.
+  useEffect(() => {
+    if (lzCustomize) {
+      setLzComponents(new Set(LZ_TIER_COMPONENTS[landingZoneTier]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [landingZoneTier, lzCustomize]);
 
   const [profile, setProfile] = useState<AssessmentProfile | null>(null);
   const [perFile, setPerFile] = useState<PerFile[]>([]);
@@ -499,6 +560,8 @@ export default function AssessmentApp({ user }: { user: string }) {
     setCurrentProjectId(null);
     setCustomer("");
     setAppName("");
+    setLzCustomize(false);
+    setLzComponents(new Set());
   }
 
   async function signOut() {
@@ -550,6 +613,7 @@ export default function AssessmentApp({ user }: { user: string }) {
         useAhbWindows: boolean; nonProdPayg: boolean; defaultDiskTier: string;
         autoDiskTier: boolean; applyHeadroom: boolean; headroom: number;
         landingZoneTier?: string;
+        landingZoneComponents?: string[] | null;
         activePillars: string[]; items: InventoryItem[]; lines: BomLine[];
       } };
       const p = data.project;
@@ -566,6 +630,13 @@ export default function AssessmentApp({ user }: { user: string }) {
       setApplyHeadroom(p.applyHeadroom);
       setHeadroom(p.headroom);
       setLandingZoneTier((p.landingZoneTier as LandingZoneTier | undefined) ?? "none");
+      if (p.landingZoneComponents && p.landingZoneComponents.length > 0) {
+        setLzCustomize(true);
+        setLzComponents(new Set(p.landingZoneComponents));
+      } else {
+        setLzCustomize(false);
+        setLzComponents(new Set());
+      }
       setActivePillars(new Set(p.activePillars as PillarKey[]));
       setDetectedPillars(new Set());
       setItems(p.items ?? []);
@@ -668,6 +739,7 @@ export default function AssessmentApp({ user }: { user: string }) {
             defaultDiskTier: diskTier, autoDiskTier, appName,
             headroom: applyHeadroom ? headroom : 1.0,
             landingZoneTier,
+            landingZoneComponents: lzCustomize ? Array.from(lzComponents) : undefined,
           },
         }),
       });
@@ -702,6 +774,7 @@ export default function AssessmentApp({ user }: { user: string }) {
           region, pricingMode, computeMode, useAhbWindows, nonProdPayg,
           defaultDiskTier: diskTier, autoDiskTier,
           applyHeadroom, headroom, landingZoneTier,
+          landingZoneComponents: lzCustomize ? Array.from(lzComponents) : undefined,
           activePillars: Array.from(activePillars),
           items,
           lines: linesOverride ?? lines,
@@ -1445,6 +1518,35 @@ export default function AssessmentApp({ user }: { user: string }) {
             <p className="helper" style={{ marginTop: "0.5rem" }}>
               {LANDING_ZONE_DESCRIPTIONS[landingZoneTier]}
             </p>
+
+            {/* Customize-components escape hatch. Opt in to tweak the
+                tier's defaults without abandoning the picker shorthand. */}
+            {landingZoneTier !== "none" && (
+              <label className="checkbox-row" style={{ marginTop: "0.75rem" }}>
+                <input
+                  type="checkbox"
+                  checked={lzCustomize}
+                  onChange={(e) => setLzCustomize(e.target.checked)}
+                />
+                <span>Customize components</span>
+                <Tooltip
+                  label="Customize components"
+                  content="Tick to pick exactly which CAF components join the estimate. The list is pre-checked from the tier above; toggle items on or off as needed."
+                />
+              </label>
+            )}
+
+            {landingZoneTier !== "none" && lzCustomize && (
+              <LzComponentChecklist
+                selected={lzComponents}
+                onToggle={(id, checked) => {
+                  const next = new Set(lzComponents);
+                  if (checked) next.add(id);
+                  else next.delete(id);
+                  setLzComponents(next);
+                }}
+              />
+            )}
           </div>
         </div>
 
