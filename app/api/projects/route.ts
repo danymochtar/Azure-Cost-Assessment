@@ -25,6 +25,7 @@ async function getOrCreateUserRow(username: string): Promise<string | null> {
 }
 
 const SaveBody = z.object({
+  customer: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   region: z.string(),
   pricingMode: z.string(),
@@ -35,6 +36,7 @@ const SaveBody = z.object({
   autoDiskTier: z.boolean(),
   applyHeadroom: z.boolean(),
   headroom: z.number(),
+  landingZoneTier: z.enum(["none", "basic", "standard", "enterprise"]).default("none"),
   activePillars: z.array(z.string()),
   items: z.array(z.unknown()),
   lines: z.array(z.unknown()).default([]),
@@ -51,10 +53,41 @@ export async function GET() {
   const user = await findUser(username);
   if (!user) return NextResponse.json({ projects: [] });
 
-  const projects = await prisma.project.findMany({
+  // Pull `lines` and `items` JSONB too — they're needed for the recap
+  // page (monthly total = sum(lines.monthlyCost); VM count = items.length).
+  // For the dashboard payload size this is fine; project-detail loads
+  // continue to go through GET /api/projects/[id].
+  const rows = await prisma.project.findMany({
     where: { userId: user.id },
     orderBy: { updatedAt: "desc" },
-    select: { id: true, name: true, region: true, updatedAt: true, createdAt: true },
+    select: {
+      id: true,
+      customer: true,
+      name: true,
+      region: true,
+      landingZoneTier: true,
+      items: true,
+      lines: true,
+      updatedAt: true,
+      createdAt: true,
+    },
+  });
+  const projects = rows.map((r) => {
+    const lines = Array.isArray(r.lines) ? (r.lines as Array<{ monthlyCost?: number }>) : [];
+    const items = Array.isArray(r.items) ? r.items : [];
+    const monthlyCost = lines.reduce((s, l) => s + (typeof l.monthlyCost === "number" ? l.monthlyCost : 0), 0);
+    return {
+      id: r.id,
+      customer: r.customer,
+      name: r.name,
+      region: r.region,
+      landingZoneTier: r.landingZoneTier,
+      vmCount: items.length,
+      monthlyCost: Math.round(monthlyCost * 100) / 100,
+      annualCost: Math.round(monthlyCost * 12 * 100) / 100,
+      updatedAt: r.updatedAt,
+      createdAt: r.createdAt,
+    };
   });
   return NextResponse.json({ projects });
 }
@@ -88,6 +121,7 @@ export async function POST(req: Request) {
   // exact JsonValue index signature Prisma wants.
   const data: Prisma.ProjectUpdateInput = {
     region: body.region,
+    customer: body.customer,
     pricingMode: body.pricingMode,
     computeMode: body.computeMode,
     useAhbWindows: body.useAhbWindows,
@@ -96,6 +130,7 @@ export async function POST(req: Request) {
     autoDiskTier: body.autoDiskTier,
     applyHeadroom: body.applyHeadroom,
     headroom: body.headroom,
+    landingZoneTier: body.landingZoneTier,
     activePillars: body.activePillars as unknown as Prisma.InputJsonValue,
     items: body.items as unknown as Prisma.InputJsonValue,
     lines: body.lines as unknown as Prisma.InputJsonValue,
@@ -103,6 +138,7 @@ export async function POST(req: Request) {
 
   const createData: Prisma.ProjectUncheckedCreateInput = {
     userId,
+    customer: body.customer,
     name: body.name,
     region: body.region,
     pricingMode: body.pricingMode,
@@ -113,18 +149,24 @@ export async function POST(req: Request) {
     autoDiskTier: body.autoDiskTier,
     applyHeadroom: body.applyHeadroom,
     headroom: body.headroom,
+    landingZoneTier: body.landingZoneTier,
     activePillars: body.activePillars as unknown as Prisma.InputJsonValue,
     items: body.items as unknown as Prisma.InputJsonValue,
     lines: body.lines as unknown as Prisma.InputJsonValue,
   };
   const project = await prisma.project.upsert({
-    where: { userId_name: { userId, name: body.name } },
+    where: { userId_customer_name: { userId, customer: body.customer, name: body.name } },
     create: createData,
     update: data,
   });
 
   return NextResponse.json({
     ok: true,
-    project: { id: project.id, name: project.name, updatedAt: project.updatedAt },
+    project: {
+      id: project.id,
+      customer: project.customer,
+      name: project.name,
+      updatedAt: project.updatedAt,
+    },
   });
 }

@@ -7,9 +7,15 @@ import {
   Search, Server, Settings2, Sparkles, Trash2, UploadCloud,
   User as UserIcon, X,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Tooltip } from "@/components/Tooltip";
 import { DEFAULT_REGION, regionLabel, regionsByGeography } from "@/lib/constants";
+import {
+  LANDING_ZONE_DESCRIPTIONS,
+  LANDING_ZONE_LABELS,
+  type LandingZoneTier,
+} from "@/lib/pillars/landing-zone";
 import type { AssessmentProfile, BomLine, ComputeMode, InventoryItem, PricingMode } from "@/lib/models";
 
 const MAX_TOTAL_UPLOAD_MB = 4;
@@ -189,12 +195,35 @@ function loadingLabel(stage: "idle" | "classifying" | "extracting" | "pricing"):
   return "";
 }
 
+// Inventory cells render OS/env as dropdowns; AI-extracted values come in
+// as free-form strings, so coerce them to the canonical option keys here.
+function osIsWindowsValue(os: string): boolean {
+  return (os ?? "").toLowerCase().includes("win");
+}
+
+const ENV_OPTIONS = [
+  "prod", "uat", "dev", "test", "staging", "sit", "qa", "preprod", "sandbox", "nonprod",
+] as const;
+
+function normaliseEnv(env: string): string {
+  const low = (env ?? "").trim().toLowerCase();
+  if (!low) return "prod";
+  const match = ENV_OPTIONS.find((o) => low.includes(o));
+  if (match) return match;
+  // Common aliases the AI might emit
+  if (low.includes("stage") || low.includes("stg")) return "staging";
+  if (low.includes("non-prod") || low.includes("non prod")) return "nonprod";
+  if (low.includes("pre-prod") || low.includes("pre prod")) return "preprod";
+  return "prod";
+}
+
 export default function AssessmentApp({ user }: { user: string }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [pastedText, setPastedText] = useState("");
+  const [customer, setCustomer] = useState("");
   const [appName, setAppName] = useState("");
   const [region, setRegion] = useState<string>(DEFAULT_REGION);
   const [pricingMode, setPricingMode] = useState<PricingMode>("payg");
@@ -208,6 +237,10 @@ export default function AssessmentApp({ user }: { user: string }) {
   // the `headroom` value get used.
   const [applyHeadroom, setApplyHeadroom] = useState(false);
   const [headroom, setHeadroom] = useState(1.2);
+  // CAF Landing Zone tier — adds shared hub components (Bastion, Firewall,
+  // ExpressRoute, etc.) to every workload BOM. Defaults to "none" so the
+  // estimate matches existing behaviour until the user picks a tier.
+  const [landingZoneTier, setLandingZoneTier] = useState<LandingZoneTier>("none");
 
   const [profile, setProfile] = useState<AssessmentProfile | null>(null);
   const [perFile, setPerFile] = useState<PerFile[]>([]);
@@ -222,7 +255,7 @@ export default function AssessmentApp({ user }: { user: string }) {
   const [stage2Confirmed, setStage2Confirmed] = useState(false);
 
   // Saved projects (Postgres-backed). Empty while DB is unavailable.
-  interface SavedProject { id: string; name: string; region: string; updatedAt: string }
+  interface SavedProject { id: string; customer: string; name: string; region: string; updatedAt: string }
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [savingProject, setSavingProject] = useState(false);
   const [savedToast, setSavedToast] = useState("");
@@ -379,9 +412,23 @@ export default function AssessmentApp({ user }: { user: string }) {
     void refreshProjects();
   }, [refreshProjects]);
 
+  // Auto-load when navigated here from the projects recap page with
+  // `?load=<id>`. Strips the query param after firing so a refresh
+  // doesn't re-load the same project.
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const loadId = searchParams.get("load");
+    if (!loadId) return;
+    void loadProject(loadId);
+    router.replace("/");
+    // loadProject is stable enough — depending on it would re-trigger
+    // on every render because it's a closure over many setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   async function saveCurrentProject() {
-    if (!appName.trim()) {
-      setError("Set an Application / project name in Stage 1 before saving.");
+    if (!customer.trim() || !appName.trim()) {
+      setError("Set both Customer and Project name in Stage 1 before saving.");
       return;
     }
     setSavingProject(true);
@@ -391,6 +438,7 @@ export default function AssessmentApp({ user }: { user: string }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          customer: customer.trim(),
           name: appName.trim(),
           region,
           pricingMode,
@@ -401,6 +449,7 @@ export default function AssessmentApp({ user }: { user: string }) {
           autoDiskTier,
           applyHeadroom,
           headroom,
+          landingZoneTier,
           activePillars: Array.from(activePillars),
           items,
           lines,
@@ -410,8 +459,11 @@ export default function AssessmentApp({ user }: { user: string }) {
         const data = (await resp.json().catch(() => ({}))) as { error?: string };
         throw new Error(data.error || `Save failed (HTTP ${resp.status})`);
       }
-      const data = (await resp.json()) as { project?: { name: string } };
-      setSavedToast(`Saved "${data.project?.name ?? appName}"`);
+      const data = (await resp.json()) as { project?: { customer?: string; name: string } };
+      const savedLabel = data.project?.customer
+        ? `${data.project.customer} · ${data.project.name}`
+        : data.project?.name ?? appName;
+      setSavedToast(`Saved "${savedLabel}"`);
       await refreshProjects();
       // Auto-clear toast after a few seconds
       setTimeout(() => setSavedToast(""), 3500);
@@ -428,12 +480,14 @@ export default function AssessmentApp({ user }: { user: string }) {
       const resp = await fetch(`/api/projects/${id}`, { cache: "no-store" });
       if (!resp.ok) throw new Error(`Load failed (HTTP ${resp.status})`);
       const data = (await resp.json()) as { project: {
-        name: string; region: string; pricingMode: string; computeMode: string;
+        customer: string; name: string; region: string; pricingMode: string; computeMode: string;
         useAhbWindows: boolean; nonProdPayg: boolean; defaultDiskTier: string;
         autoDiskTier: boolean; applyHeadroom: boolean; headroom: number;
+        landingZoneTier?: string;
         activePillars: string[]; items: InventoryItem[]; lines: BomLine[];
       } };
       const p = data.project;
+      setCustomer(p.customer ?? "");
       setAppName(p.name);
       setRegion(p.region);
       setPricingMode(p.pricingMode as PricingMode);
@@ -444,6 +498,7 @@ export default function AssessmentApp({ user }: { user: string }) {
       setAutoDiskTier(p.autoDiskTier);
       setApplyHeadroom(p.applyHeadroom);
       setHeadroom(p.headroom);
+      setLandingZoneTier((p.landingZoneTier as LandingZoneTier | undefined) ?? "none");
       setActivePillars(new Set(p.activePillars as PillarKey[]));
       setDetectedPillars(new Set());
       setItems(p.items ?? []);
@@ -451,7 +506,7 @@ export default function AssessmentApp({ user }: { user: string }) {
       // We have items + lines — jump straight to the latest stage available
       setStage1Confirmed((p.items ?? []).length > 0);
       setStage2Confirmed((p.lines ?? []).length > 0);
-      setSavedToast(`Loaded "${p.name}"`);
+      setSavedToast(`Loaded "${p.customer ? `${p.customer} · ` : ""}${p.name}"`);
       setTimeout(() => setSavedToast(""), 3500);
     } catch (e) {
       setError((e as Error).message);
@@ -539,6 +594,7 @@ export default function AssessmentApp({ user }: { user: string }) {
             region, pricingMode, computeMode, useAhbWindows, nonProdPayg,
             defaultDiskTier: diskTier, autoDiskTier, appName,
             headroom: applyHeadroom ? headroom : 1.0,
+            landingZoneTier,
           },
         }),
       });
@@ -603,6 +659,9 @@ export default function AssessmentApp({ user }: { user: string }) {
           <UserIcon size={14} />
           <span className="who">{user}</span>
         </div>
+        <Link href="/projects" className="ghost icon-only" title="Saved projects recap" aria-label="Saved projects recap">
+          <FolderOpen size={18} />
+        </Link>
         <button className="ghost icon-only" onClick={resetAll} title="Start over" aria-label="Start over">
           <RefreshCcw size={18} />
         </button>
@@ -621,27 +680,30 @@ export default function AssessmentApp({ user }: { user: string }) {
             <FolderOpen size={14} /> Saved projects
           </span>
           <div className="saved-projects-list">
-            {savedProjects.map((p) => (
-              <span key={p.id} className="saved-project-pill">
-                <button
-                  type="button"
-                  className="saved-project-load"
-                  title={`Load "${p.name}" — last updated ${new Date(p.updatedAt).toLocaleString()}`}
-                  onClick={() => void loadProject(p.id)}
-                >
-                  {p.name}
-                </button>
-                <button
-                  type="button"
-                  className="saved-project-del"
-                  title="Delete"
-                  aria-label={`Delete ${p.name}`}
-                  onClick={() => void deleteProject(p.id, p.name)}
-                >
-                  <Trash2 size={12} />
-                </button>
-              </span>
-            ))}
+            {savedProjects.map((p) => {
+              const label = p.customer ? `${p.customer} · ${p.name}` : p.name;
+              return (
+                <span key={p.id} className="saved-project-pill">
+                  <button
+                    type="button"
+                    className="saved-project-load"
+                    title={`Load "${label}" — last updated ${new Date(p.updatedAt).toLocaleString()}`}
+                    onClick={() => void loadProject(p.id)}
+                  >
+                    {label}
+                  </button>
+                  <button
+                    type="button"
+                    className="saved-project-del"
+                    title="Delete"
+                    aria-label={`Delete ${label}`}
+                    onClick={() => void deleteProject(p.id, label)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </span>
+              );
+            })}
           </div>
         </div>
       )}
@@ -751,11 +813,30 @@ export default function AssessmentApp({ user }: { user: string }) {
           </div>
         )}
 
-        {/* Application name lives in Stage 1 — it's project metadata,
-            not a design choice. Tagged into every BOM line for export. */}
+        {/* Customer + project name live in Stage 1 — both are required
+            so saved assessments have a stable identity for reload/delete.
+            The (customer, project) pair is the unique key per user. */}
+        <div className="field" style={{ marginTop: "1rem" }}>
+          <label className="field-label" htmlFor="customer">
+            Customer <span style={{ color: "#d13438" }}>*</span>
+            <Tooltip
+              label="Customer"
+              content="The end customer or account this assessment belongs to. Combined with the project name to namespace saved assessments — two different customers can have a project with the same name."
+            />
+          </label>
+          <input
+            id="customer"
+            type="text"
+            required
+            aria-required="true"
+            value={customer}
+            onChange={(e) => setCustomer(e.target.value)}
+            placeholder="e.g. Contoso, Northwind"
+          />
+        </div>
         <div className="field" style={{ marginTop: "1rem" }}>
           <label className="field-label" htmlFor="appName">
-            Application / project name
+            Application / project name <span style={{ color: "#d13438" }}>*</span>
             <Tooltip
               label="Application name"
               content="Tagged into the Custom name column of every line in the Excel export so multi-project BOMs stay traceable."
@@ -764,6 +845,8 @@ export default function AssessmentApp({ user }: { user: string }) {
           <input
             id="appName"
             type="text"
+            required
+            aria-required="true"
             value={appName}
             onChange={(e) => setAppName(e.target.value)}
             placeholder="e.g. ERPSuite, FraudAI"
@@ -775,7 +858,13 @@ export default function AssessmentApp({ user }: { user: string }) {
           <button
             className="primary"
             style={{ width: "100%" }}
-            disabled={stage !== "idle" || tooLarge || (files.length === 0 && !pastedText.trim())}
+            disabled={
+              stage !== "idle" ||
+              tooLarge ||
+              (files.length === 0 && !pastedText.trim()) ||
+              !customer.trim() ||
+              !appName.trim()
+            }
             onClick={() => void runAnalyze()}
           >
             {stage === "classifying" || stage === "extracting" ? (
@@ -979,22 +1068,34 @@ export default function AssessmentApp({ user }: { user: string }) {
                         />
                       </td>
                       <td>
-                        <input
-                          type="text"
+                        <select
                           className="inv-input inv-os"
-                          value={it.os}
+                          value={osIsWindowsValue(it.os) ? "Windows" : "Linux"}
                           onChange={(e) => updateItem(idx, { os: e.target.value })}
-                          placeholder="Linux / Windows"
-                        />
+                          aria-label="Operating system"
+                        >
+                          <option value="Linux">Linux</option>
+                          <option value="Windows">Windows</option>
+                        </select>
                       </td>
                       <td>
-                        <input
-                          type="text"
+                        <select
                           className="inv-input inv-env"
-                          value={it.environment}
+                          value={normaliseEnv(it.environment)}
                           onChange={(e) => updateItem(idx, { environment: e.target.value })}
-                          placeholder="prod / uat / dev"
-                        />
+                          aria-label="Environment"
+                        >
+                          <option value="prod">prod</option>
+                          <option value="uat">uat</option>
+                          <option value="dev">dev</option>
+                          <option value="test">test</option>
+                          <option value="staging">staging</option>
+                          <option value="sit">sit</option>
+                          <option value="qa">qa</option>
+                          <option value="preprod">preprod</option>
+                          <option value="sandbox">sandbox</option>
+                          <option value="nonprod">nonprod</option>
+                        </select>
                       </td>
                       <td className="cell-checkbox">
                         <input
@@ -1188,6 +1289,33 @@ export default function AssessmentApp({ user }: { user: string }) {
           </div>
         </div>
 
+        {/* Platform Landing Zone (CAF) — adds shared hub components on top
+            of every workload, regardless of Solution Area. Sits between the
+            design knobs and the CTA so users see it before pricing. */}
+        <div className="row" style={{ marginTop: "1rem" }}>
+          <div className="field" style={{ width: "100%" }}>
+            <label className="field-label" htmlFor="landingZoneTier">
+              Platform Landing Zone (CAF)
+              <Tooltip
+                label="Landing Zone tier"
+                content="Microsoft Cloud Adoption Framework recommends every Azure tenant deploy a platform hub (shared Bastion, Firewall, Log Analytics, Defender, ExpressRoute) before workloads. Pick a tier to add those shared components to the BOM — the same hub serves Infra Lift-and-Shift, Modernization, and Data & AI workloads."
+              />
+            </label>
+            <select
+              id="landingZoneTier"
+              value={landingZoneTier}
+              onChange={(e) => setLandingZoneTier(e.target.value as LandingZoneTier)}
+            >
+              {(Object.keys(LANDING_ZONE_LABELS) as LandingZoneTier[]).map((t) => (
+                <option key={t} value={t}>{LANDING_ZONE_LABELS[t]}</option>
+              ))}
+            </select>
+            <p className="helper" style={{ marginTop: "0.5rem" }}>
+              {LANDING_ZONE_DESCRIPTIONS[landingZoneTier]}
+            </p>
+          </div>
+        </div>
+
         {/* Stage 3 CTA — runs pricing and reveals Stage 4. */}
         <div style={{ marginTop: "1.25rem" }}>
           <button
@@ -1261,7 +1389,7 @@ export default function AssessmentApp({ user }: { user: string }) {
             <button className="primary" onClick={() => void downloadExcel()}>
               <Download size={16} /> Download Excel (full breakdown)
             </button>
-            <button onClick={() => void saveCurrentProject()} disabled={savingProject || !appName.trim()}>
+            <button onClick={() => void saveCurrentProject()} disabled={savingProject || !customer.trim() || !appName.trim()}>
               {savingProject ? (
                 <><Loader2 size={16} className="spin" /> Saving…</>
               ) : (
