@@ -16,11 +16,19 @@ You will be given the FULL contents of a file describing a workload. The file ma
 Your job: extract every distinct server / VM mentioned, with normalized fields, and return the list via the 'submit_inventory' tool.
 
 CRITICAL — read the VALUES, not just the labels:
-- For pivoted layouts: scan both columns. The values column is the one
-  with numbers and SKU strings (e.g. "16", "64 GB", "Xeon Gold 6346");
-  the keys column has labels like "Processor", "RAM", "Disk".
+- For pivoted layouts: scan EVERY column to the right of the keys column,
+  even if its column header is blank or auto-named like "Column B". The
+  preview generator pads the header row to the widest data row so the
+  values are always present in the table — they will NOT be missing
+  from your input.
+- The values column is the one with numbers and SKU strings (e.g. "16",
+  "64 GB", "Xeon Gold 6346"); the keys column has labels like
+  "Processor", "RAM", "Disk".
 - If a sheet has multiple value columns adjacent to one key column,
   each value column is a separate server — extract them all.
+- For images: zoom mentally on every column you can see. Do not assume
+  the right-hand column is missing just because it's narrow or visually
+  separated — re-read the pixels before defaulting to zeros.
 - NEVER return vcpu=0, memory_gb=0, or storage_gb=0 silently. If you
   truly cannot find the value, set the field to 0 AND write a short
   note explaining what was missing so the user can fix the upload.
