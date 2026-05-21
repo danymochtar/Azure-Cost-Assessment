@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { extractInventory } from "@/lib/parsers/inventory";
 import type { InventoryItem, Notice } from "@/lib/models";
+import { emptyUsage, mergeUsage } from "@/lib/usage";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -40,6 +41,7 @@ export async function POST(req: Request) {
     const seen = new Set<string>();
     const merged: InventoryItem[] = [];
     const notices: Notice[] = [];
+    let usage = emptyUsage();
 
     const results = await Promise.allSettled(
       blobs.map(async (f) => ({ name: f.name, r: await extractInventory(f.data, f.name) })),
@@ -58,6 +60,7 @@ export async function POST(req: Request) {
         continue;
       }
       const r = result.value.r;
+      usage = mergeUsage(usage, r.usage);
       for (const it of r.items) {
         const k = (it.name ?? "").trim().toLowerCase();
         if (k && seen.has(k)) continue;
@@ -111,7 +114,7 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ items: merged, notices });
+    return NextResponse.json({ items: merged, notices, usage });
   } catch (e) {
     const err = e as Error;
     return NextResponse.json({ error: `${err.name}: ${err.message}` }, { status: 500 });

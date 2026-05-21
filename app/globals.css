@@ -612,6 +612,50 @@ details.notice-pill-expandable > p {
   white-space: pre-wrap;
 }
 
+/* AI spend recap — collapsible breakdown of token usage + USD cost
+ * shown at the bottom of Stage 4. */
+.ai-spend-recap {
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  background: var(--surface-soft, rgba(148, 163, 184, 0.05));
+  padding: 0.5rem 0.85rem;
+}
+.ai-spend-recap > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.88rem;
+}
+.ai-spend-recap > summary::-webkit-details-marker { display: none; }
+.ai-spend-recap > summary::before {
+  content: "▸";
+  margin-right: 0.4rem;
+  transition: transform 120ms ease;
+  display: inline-block;
+}
+.ai-spend-recap[open] > summary::before { transform: rotate(90deg); }
+.ai-spend-label { font-weight: 600; }
+.ai-spend-total { color: var(--text-muted, #475569); font-variant-numeric: tabular-nums; }
+.ai-spend-body { margin-top: 0.75rem; overflow-x: auto; }
+.ai-spend-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.ai-spend-table th, .ai-spend-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  text-align: left;
+}
+.ai-spend-table th.num, .ai-spend-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.ai-spend-table tbody tr:last-child td {
+  border-bottom: none;
+  border-top: 2px solid var(--border, #e2e8f0);
+}
+
 /* =============================================================================
  * Tables
  * ============================================================================= */

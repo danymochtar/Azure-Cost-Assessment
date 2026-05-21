@@ -2,6 +2,7 @@ import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import { getClient } from "../anthropic";
 import type { DiskItem, InventoryItem } from "../models";
+import { accumulate, deltaFromMessage, emptyUsage, type UsageTotal } from "../usage";
 import { prepareChunks, type UploadChunk } from "./content";
 
 const SYSTEM_PROMPT = `You are an expert data engineer specializing in IT infrastructure inventory discovery.
@@ -118,6 +119,7 @@ export interface ExtractionResult {
   mode: "direct" | "failed";
   modelUsed?: string;
   escalations?: string[]; // human-readable trail of which models were tried
+  usage: UsageTotal;
 }
 
 // Escalation cascade. Cheap first, expensive only when needed.
@@ -203,6 +205,7 @@ async function callExtractor(
   filename: string,
   textSummary: string,
   retryHint: string,
+  usage?: UsageTotal,
 ): Promise<{ items: InventoryItem[]; summary: string } | null> {
   const hint = retryHint
     ? `\n\nNOTE: a previous attempt was incomplete (${retryHint}). Look more carefully at the VALUES side of any pivoted layouts — the numeric specs ARE somewhere in the preview.`
@@ -234,6 +237,7 @@ async function callExtractor(
     ],
   });
 
+  if (usage) accumulate(usage, deltaFromMessage(resp, model));
   const toolBlock = resp.content.find((b) => b.type === "tool_use");
   if (!toolBlock || toolBlock.type !== "tool_use") return null;
   const parsed = ExtractionSchema.parse(toolBlock.input);
@@ -290,6 +294,7 @@ async function extractOneChunk(
   client: Anthropic,
   chunk: UploadChunk,
   trail: string[],
+  usage?: UsageTotal,
 ): Promise<{ items: InventoryItem[]; summary: string; modelUsed: string } | null> {
   let best: { items: InventoryItem[]; summary: string; modelUsed: string } | null = null;
   const labelPrefix = chunk.totalChunks > 1 ? `[${chunk.chunkLabel}] ` : "";
@@ -308,6 +313,7 @@ async function extractOneChunk(
           chunk.filename,
           chunk.textSummary,
           retryHint,
+          usage,
         );
         if (!r) {
           trail.push(`${labelPrefix}${model}: no tool_use block`);
@@ -375,6 +381,7 @@ export async function extractInventory(
   const escalations: string[] = [];
   const merged: InventoryItem[] = [];
   const seen = new Set<string>();
+  const usage = emptyUsage();
   let bestSummary = "";
   let bestModelUsed = "";
 
@@ -393,7 +400,7 @@ export async function extractInventory(
 
     let result: { items: InventoryItem[]; summary: string; modelUsed: string } | null;
     try {
-      result = await extractOneChunk(client, chunk, escalations);
+      result = await extractOneChunk(client, chunk, escalations, usage);
     } catch (e) {
       escalations.push(`${chunk.chunkLabel ?? `chunk ${ci + 1}`}: hard error ${(e as Error).message}`);
       continue;
@@ -424,6 +431,7 @@ export async function extractInventory(
       summary: "Extractor returned no usable result across Haiku → Sonnet → Opus.",
       mode: "failed",
       escalations,
+      usage,
     };
   }
 
@@ -436,5 +444,6 @@ export async function extractInventory(
     mode: "direct",
     modelUsed: bestModelUsed,
     escalations: escalations.length ? escalations : undefined,
+    usage,
   };
 }

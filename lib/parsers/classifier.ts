@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { callWithCascade, getClient, HAIKU_TO_OPUS, type ModelId } from "../anthropic";
 import type { AssessmentProfile, WorkloadType } from "../models";
+import { accumulate, deltaFromMessage, emptyUsage, type UsageTotal } from "../usage";
 import { prepare } from "./content";
 
 export interface FileBlob {
@@ -87,6 +88,7 @@ export async function classify(
   data: Buffer,
   filename: string,
   apiKey?: string,
+  usage?: UsageTotal,
 ): Promise<AssessmentProfile> {
   const uc = await prepare(data, filename, 5);
   const client = getClient(apiKey);
@@ -120,6 +122,7 @@ export async function classify(
   };
 
   const response = await callWithCascade({ cascade: HAIKU_TO_OPUS, invoke });
+  if (usage) accumulate(usage, deltaFromMessage(response));
   const toolBlock = response.content.find((b) => b.type === "tool_use");
   if (!toolBlock || toolBlock.type !== "tool_use") {
     throw new Error("Classifier did not return a tool_use block");
@@ -145,11 +148,12 @@ export interface ClassificationResult {
 export async function classifyMany(
   files: FileBlob[],
   apiKey?: string,
-): Promise<{ perFile: ClassificationResult[]; aggregate: AssessmentProfile }> {
+): Promise<{ perFile: ClassificationResult[]; aggregate: AssessmentProfile; usage: UsageTotal }> {
+  const usage = emptyUsage();
   const perFile = await Promise.all(
     files.map(async (f): Promise<ClassificationResult> => {
       try {
-        const profile = await classify(f.data, f.name, apiKey);
+        const profile = await classify(f.data, f.name, apiKey, usage);
         return { filename: f.name, profile };
       } catch (e) {
         return { filename: f.name, profile: null, error: (e as Error).message };
@@ -189,5 +193,5 @@ export async function classifyMany(
     };
   }
 
-  return { perFile, aggregate };
+  return { perFile, aggregate, usage };
 }
