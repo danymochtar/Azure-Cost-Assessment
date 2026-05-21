@@ -68,8 +68,11 @@ describe("HA flag", () => {
 
     const vmNoHa = noHa.find((l) => l.category === "Virtual Machines");
     const vmHa = ha.find((l) => l.category === "Virtual Machines");
-    expect(vmNoHa!.resource).toContain("x1");
-    expect(vmHa!.resource).toContain("x2");
+    // Count moved out of the resource string into resourceCount (Qty
+    // column in the UI); the name stays clean ("Virtual Machine B2s
+    // (Linux)") with the count surfaced separately.
+    expect(vmNoHa!.resourceCount).toBe(1);
+    expect(vmHa!.resourceCount).toBe(2);
     expect(vmHa!.monthlyCost).toBeCloseTo(2 * vmNoHa!.monthlyCost, 2);
   });
 

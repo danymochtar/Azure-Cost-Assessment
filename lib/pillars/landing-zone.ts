@@ -289,6 +289,10 @@ interface LineMeta {
   quantity: number;
   monthlyCost: number;
   assumption: string;
+  /** How many distinct resources this line represents (e.g. 5 for
+   *  "Defender Servers × 5 VMs"). Defaults to 1 for fixed-quantity
+   *  hub components like Bastion. Displayed in the BOM table Qty col. */
+  resourceCount?: number;
 }
 
 // id → (params, inventory) ⇒ LineMeta | null
@@ -430,62 +434,68 @@ const FACTORIES: Record<string, LineFactory> = {
     if (billable === 0) return null;
     return {
       category: "Landing Zone · Security",
-      resource: `Microsoft Defender CSPM × ${billable} billable resource${billable === 1 ? "" : "s"}`,
+      resource: "Microsoft Defender CSPM (paid)",
       sku: "defender-cspm",
       unit: "1/Month", unitPrice: DEFENDER_PRICES.cspmPerResource, quantity: billable,
       monthlyCost: billable * DEFENDER_PRICES.cspmPerResource,
-      assumption: `Defender CSPM (paid) at $${DEFENDER_PRICES.cspmPerResource.toFixed(2)}/billable resource. VMs (${inv.vmCount}) + storage accounts (${p.storageAccountCount}) + key vaults (${p.keyVaultCount}). Adds attack path analysis, agentless vulnerability scanning, regulatory compliance.`,
+      resourceCount: billable,
+      assumption: `${billable} billable resource${billable === 1 ? "" : "s"} × $${DEFENDER_PRICES.cspmPerResource.toFixed(2)}/mo (VMs ${inv.vmCount} + storage accounts ${p.storageAccountCount} + key vaults ${p.keyVaultCount}). Adds attack path analysis, agentless vulnerability scanning, regulatory compliance.`,
     };
   },
   "def-resource-manager": () => ({
     category: "Landing Zone · Security",
-    resource: "Microsoft Defender for Resource Manager × 1 subscription",
+    resource: "Microsoft Defender for Resource Manager",
     sku: "defender-arm",
     unit: "1/Month", unitPrice: DEFENDER_PRICES.resourceManager, quantity: 1,
     monthlyCost: DEFENDER_PRICES.resourceManager,
+    resourceCount: 1,
     assumption: `Per-subscription plan at $${DEFENDER_PRICES.resourceManager.toFixed(2)}/mo. Detects malicious Resource Manager operations.`,
   }),
   "def-servers-p1": (_p, inv) => {
     if (inv.vmCount === 0) return null;
     return {
       category: "Landing Zone · Security",
-      resource: `Microsoft Defender for Servers Plan 1 (P1) × ${inv.vmCount} VM${inv.vmCount === 1 ? "" : "s"}`,
+      resource: "Microsoft Defender for Servers Plan 1 (P1)",
       sku: "defender-servers-p1",
       unit: "1/Month", unitPrice: DEFENDER_PRICES.serversP1, quantity: inv.vmCount,
       monthlyCost: inv.vmCount * DEFENDER_PRICES.serversP1,
-      assumption: `$${DEFENDER_PRICES.serversP1.toFixed(2)}/VM/mo × ${inv.vmCount} VMs. EDR-focused: Defender for Endpoint integration, alerts, software inventory.`,
+      resourceCount: inv.vmCount,
+      assumption: `$${DEFENDER_PRICES.serversP1.toFixed(2)}/VM/mo × ${inv.vmCount} VM${inv.vmCount === 1 ? "" : "s"}. EDR-focused: Defender for Endpoint integration, alerts, software inventory.`,
     };
   },
   "def-servers-p2": (_p, inv) => {
     if (inv.vmCount === 0) return null;
     return {
       category: "Landing Zone · Security",
-      resource: `Microsoft Defender for Servers Plan 2 (P2) × ${inv.vmCount} VM${inv.vmCount === 1 ? "" : "s"}`,
+      resource: "Microsoft Defender for Servers Plan 2 (P2)",
       sku: "defender-servers-p2",
       unit: "1/Month", unitPrice: DEFENDER_PRICES.serversP2, quantity: inv.vmCount,
       monthlyCost: inv.vmCount * DEFENDER_PRICES.serversP2,
-      assumption: `$${DEFENDER_PRICES.serversP2.toFixed(2)}/VM/mo × ${inv.vmCount} VMs. Adds agentless disk scanning, file integrity monitoring, just-in-time VM access, regulatory compliance, free Defender for DNS.`,
+      resourceCount: inv.vmCount,
+      assumption: `$${DEFENDER_PRICES.serversP2.toFixed(2)}/VM/mo × ${inv.vmCount} VM${inv.vmCount === 1 ? "" : "s"}. Adds agentless disk scanning, file integrity monitoring, just-in-time VM access, regulatory compliance, free Defender for DNS.`,
     };
   },
   "def-sql-on-machines": (_p, inv) => {
     if (inv.sqlVmCount === 0) return null;
     return {
       category: "Landing Zone · Security",
-      resource: `Microsoft Defender for SQL on Machines × ${inv.sqlVmCount} server${inv.sqlVmCount === 1 ? "" : "s"}`,
+      resource: "Microsoft Defender for SQL on Machines",
       sku: "defender-sql-on-machines",
       unit: "1/Month", unitPrice: DEFENDER_PRICES.sqlOnMachinePerServer, quantity: inv.sqlVmCount,
       monthlyCost: inv.sqlVmCount * DEFENDER_PRICES.sqlOnMachinePerServer,
-      assumption: `$${DEFENDER_PRICES.sqlOnMachinePerServer.toFixed(2)}/server/mo × ${inv.sqlVmCount} SQL-bearing VMs. Detects SQL-injection, brute-force, anomalous queries.`,
+      resourceCount: inv.sqlVmCount,
+      assumption: `$${DEFENDER_PRICES.sqlOnMachinePerServer.toFixed(2)}/server/mo × ${inv.sqlVmCount} SQL-bearing VM${inv.sqlVmCount === 1 ? "" : "s"}. Detects SQL-injection, brute-force, anomalous queries.`,
     };
   },
   "def-storage": (p) => {
     const n = p.storageAccountCount > 0 ? p.storageAccountCount : 1;
     return {
       category: "Landing Zone · Security",
-      resource: `Microsoft Defender for Storage × ${n} account${n === 1 ? "" : "s"}`,
+      resource: "Microsoft Defender for Storage",
       sku: "defender-storage",
       unit: "1/Month", unitPrice: DEFENDER_PRICES.storagePerAccount, quantity: n,
       monthlyCost: n * DEFENDER_PRICES.storagePerAccount,
+      resourceCount: n,
       assumption: `$${DEFENDER_PRICES.storagePerAccount.toFixed(2)}/storage account/mo × ${n}. Malware scanning ($0.15/GB scanned, cappable) priced separately if enabled.`,
     };
   },
@@ -493,10 +503,11 @@ const FACTORIES: Record<string, LineFactory> = {
     const n = p.keyVaultCount > 0 ? p.keyVaultCount : 1;
     return {
       category: "Landing Zone · Security",
-      resource: `Microsoft Defender for Key Vault × ${n} vault${n === 1 ? "" : "s"}`,
+      resource: "Microsoft Defender for Key Vault",
       sku: "defender-keyvault",
       unit: "1/Month", unitPrice: DEFENDER_PRICES.keyVaultPerVault, quantity: n,
       monthlyCost: n * DEFENDER_PRICES.keyVaultPerVault,
+      resourceCount: n,
       assumption: `$${DEFENDER_PRICES.keyVaultPerVault.toFixed(2)}/vault/mo × ${n}. Detects anomalous Key Vault access patterns.`,
     };
   },
@@ -504,10 +515,11 @@ const FACTORIES: Record<string, LineFactory> = {
     const n = p.containerVCoreCount > 0 ? p.containerVCoreCount : 1;
     return {
       category: "Landing Zone · Security",
-      resource: `Microsoft Defender for Containers × ${n} vCores`,
+      resource: "Microsoft Defender for Containers",
       sku: "defender-containers",
       unit: "1/Month", unitPrice: DEFENDER_PRICES.containersPerVCore, quantity: n,
       monthlyCost: n * DEFENDER_PRICES.containersPerVCore,
+      resourceCount: n,
       assumption: `$${DEFENDER_PRICES.containersPerVCore.toFixed(2)}/Kubernetes vCore/mo × ${n}. Adds Kubernetes hardening, vulnerability assessment, runtime threat detection.`,
     };
   },
@@ -515,10 +527,11 @@ const FACTORIES: Record<string, LineFactory> = {
     const n = p.appServiceCount > 0 ? p.appServiceCount : 1;
     return {
       category: "Landing Zone · Security",
-      resource: `Microsoft Defender for App Service × ${n} app${n === 1 ? "" : "s"}`,
+      resource: "Microsoft Defender for App Service",
       sku: "defender-app-service",
       unit: "1/Month", unitPrice: DEFENDER_PRICES.appServicePerApp, quantity: n,
       monthlyCost: n * DEFENDER_PRICES.appServicePerApp,
+      resourceCount: n,
       assumption: `$${DEFENDER_PRICES.appServicePerApp.toFixed(2)}/App Service/mo × ${n}. Detects suspicious uploads, web shells, anomalous request patterns.`,
     };
   },
@@ -544,7 +557,7 @@ function metaToBomLine(meta: LineMeta, region: string, appName: string, tag: str
     source: "lz-baseline",
     serviceName: meta.category.replace(/^Landing Zone · /, ""),
     customName: appName ? `${appName}-LZ` : "Landing Zone",
-    resourceCount: 1,
+    resourceCount: meta.resourceCount ?? 1,
     billingTerm: "PAYG",
     assumption: `${meta.assumption} ${tag}`,
   };

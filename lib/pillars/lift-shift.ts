@@ -142,7 +142,7 @@ export async function buildLiftShiftBom(
     const line: BomLine = {
       ...emptyBomLine(),
       category: "Virtual Machines",
-      resource: `Virtual Machine ${g.meta.display} (${g.meta.os}${g.meta.ahb ? " + AHB" : ""}) x${g.count}`,
+      resource: `Virtual Machine ${g.meta.display} (${g.meta.os}${g.meta.ahb ? " + AHB" : ""})`,
       sku: g.meta.arm,
       meter: rec?.meterName ?? "(no retail meter)",
       region: opts.region,
